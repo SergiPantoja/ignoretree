@@ -17,7 +17,7 @@ jobs:
     name: Lint & Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # astral-sh/ruff-action runs ruff in a standalone manner (no uv/venv needed).
       # First invocation: lint check (catches errors, import sorting, etc.)
@@ -36,7 +36,7 @@ jobs:
     name: Type Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # setup-uv installs uv and caches the virtualenv/packages between runs.
       - uses: astral-sh/setup-uv@v5
@@ -57,7 +57,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # setup-uv with python-version ensures uv uses the matrix version.
       - uses: astral-sh/setup-uv@v5
