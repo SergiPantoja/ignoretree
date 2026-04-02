@@ -1,2 +1,3 @@
-def hello() -> str:
-    return "Hello from ignoretree!"
+"""Layered gitignore-compatible ignore pattern resolution for Python."""
+
+__version__ = "0.1.0"

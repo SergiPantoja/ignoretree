@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# If a new commit is pushed to the same branch/PR, cancel the in-progress run
+# to save CI minutes. The group key ensures only one run per branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # astral-sh/ruff-action runs ruff in a standalone manner (no uv/venv needed).
+      # First invocation: lint check (catches errors, import sorting, etc.)
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: "check src/ tests/"
+
+      # Second invocation: format check (fails if any file isn't formatted)
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check src/ tests/"
+
+  # Static type checking with mypy in strict mode.
+  # Runs with uv to get the full project environment (dependencies + type stubs).
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-uv installs uv and caches the virtualenv/packages between runs.
+      - uses: astral-sh/setup-uv@v5
+
+      # uv sync installs all dependencies (including dev group with mypy).
+      - run: uv sync
+
+      - run: uv run mypy src/
+
+  # Test matrix across Python 3.11–3.14.
+  # Each version runs pytest with coverage (configured in pyproject.toml).
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Don't cancel other versions if one fails.
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-uv with python-version ensures uv uses the matrix version.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync
+
+      # Runs pytest. Coverage flags (--cov=ignoretree, --cov-report=term-missing,
+      # --cov-report=xml) are configured in pyproject.toml [tool.pytest.ini_options],
+      # so no flags needed here. The xml report (coverage.xml) is available for
+      # future codecov upload.
+      - run: uv run pytest

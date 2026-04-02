@@ -57,6 +57,8 @@ select = [
     "B",    # flake8-bugbear
     "SIM",  # flake8-simplify
     "RUF",  # ruff-specific
+    "N",    # pep8-naming
+    "PTH",  # use pathlib instead of os.path
 ]
 
 [tool.mypy]
@@ -67,5 +69,5 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --cov=ignoretree --cov-report=term-missing --cov-report=xml"
 xfail_strict = true
