@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v6
 
       # setup-uv installs uv and caches the virtualenv/packages between runs.
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
 
       # uv sync installs all dependencies (including dev group with mypy).
       - run: uv sync
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v6
 
       # setup-uv with python-version ensures uv uses the matrix version.
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
 
