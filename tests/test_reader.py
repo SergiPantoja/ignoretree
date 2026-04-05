@@ -17,13 +17,6 @@ class TestReadIgnoreFile:
         assert patterns == ["*.pyc", "__pycache__/", "dist/"]
         assert len(sources) == 3
 
-    def test_strips_leading_whitespace_only(self, tmp_path: Path) -> None:
-        """Leading whitespace is stripped; trailing is preserved for pathspec."""
-        f = tmp_path / ".gitignore"
-        f.write_text("  *.pyc  \n  dist/  \n")
-        patterns, _ = read_ignore_file(f)
-        assert patterns == ["*.pyc  ", "dist/  "]
-
     def test_skips_comments(self, tmp_path: Path) -> None:
         f = tmp_path / ".gitignore"
         f.write_text("# comment\n*.pyc\n# another\n")

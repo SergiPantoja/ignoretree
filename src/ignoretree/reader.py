@@ -16,10 +16,9 @@ def read_ignore_file(
 ) -> tuple[list[str], list[PatternSource]]:
     """Read and parse a gitignore-format ignore file.
 
-    Extracts patterns from the file, skipping blank lines and comments.
-    Leading whitespace is stripped; trailing whitespace is preserved for
-    pathspec to handle (important for backslash-escaped trailing spaces
-    like ``foo\\ ``).
+    Extracts patterns from the file, skipping blank lines and comments. Trailing
+    whitespace is preserved for pathspec to handle (important for
+    backslash-escaped trailing spaces like ``foo\\ ``).
 
     Args:
         path: Absolute path to the ignore file.

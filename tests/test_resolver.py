@@ -19,18 +19,14 @@ class TestDefaults:
         assert resolver.is_ignored(".git/config") is True
         assert resolver.is_ignored(".git/HEAD") is True
         assert resolver.is_ignored("module.pyc") is True
+        assert resolver.is_ignored("README.md") is False
+        assert resolver.is_ignored("pyproject.toml") is False
 
     def test_no_defaults_ignores_nothing(self, tmp_path: Path) -> None:
         resolver = IgnoreResolver(tmp_path)
         assert resolver.is_ignored(".git/config") is False
         assert resolver.is_ignored("module.pyc") is False
         assert resolver.is_ignored("src/main.py") is False
-
-    def test_does_not_ignore_unmatched(self, tmp_path: Path) -> None:
-        resolver = IgnoreResolver(tmp_path, default_patterns=["*.pyc", "__pycache__/"])
-        assert resolver.is_ignored("src/main.py") is False
-        assert resolver.is_ignored("README.md") is False
-        assert resolver.is_ignored("pyproject.toml") is False
 
 
 # ---------------------------------------------------------------------------
@@ -74,17 +70,18 @@ class TestInfoExclude:
 class TestGitignore:
     """Tests for .gitignore loading and nested scoping."""
 
+    def test_empty_gitignore(self, tmp_path: Path) -> None:
+        (tmp_path / ".gitignore").write_text("")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        assert resolver.is_ignored("main.py") is False
+
     def test_loads_root_gitignore(self, tmp_path: Path) -> None:
         (tmp_path / ".gitignore").write_text("*.csv\n")
         resolver = IgnoreResolver(tmp_path)
         resolver.enter_directory("")
         assert resolver.is_ignored("data.csv") is True
         assert resolver.is_ignored("sub/data.csv") is True
-
-    def test_gitignore_does_not_affect_unmatched(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("*.csv\n")
-        resolver = IgnoreResolver(tmp_path)
-        resolver.enter_directory("")
         assert resolver.is_ignored("main.py") is False
 
     def test_nested_gitignore_scoping(self, tmp_path: Path) -> None:
@@ -220,12 +217,7 @@ class TestDirPruning:
         resolver = IgnoreResolver(tmp_path, default_patterns=["__pycache__/"])
         assert resolver.is_dir_ignored("__pycache__") is True
         assert resolver.is_dir_ignored("src/__pycache__") is True
-
-    def test_does_not_prune_unmatched_dirs(self, tmp_path: Path) -> None:
-        resolver = IgnoreResolver(tmp_path, default_patterns=["__pycache__/"])
         assert resolver.is_dir_ignored("src") is False
-        assert resolver.is_dir_ignored("tests") is False
-        assert resolver.is_dir_ignored("docs") is False
 
     def test_prunes_gitignore_dir_pattern(self, tmp_path: Path) -> None:
         (tmp_path / ".gitignore").write_text("build_output/\n")
@@ -240,7 +232,7 @@ class TestDirPruning:
 
 
 class TestEdgeCases:
-    """Edge cases and boundary conditions."""
+    """Edge cases."""
 
     def test_comment_only_gitignore(self, tmp_path: Path) -> None:
         (tmp_path / ".gitignore").write_text("# just a comment\n#main.py\n")
@@ -256,17 +248,103 @@ class TestEdgeCases:
         resolver.enter_directory("")
         assert resolver.is_ignored("debug.log") is True
         assert resolver.is_ignored("main.py") is False
-        assert len(resolver._gitignore_layers) == 1  # No duplicate layers added
+        assert len(resolver._gitignore_layers) == 1  # no duplicate layers
 
     def test_trailing_whitespace_in_patterns(self, tmp_path: Path) -> None:
-        """Trailing whitespace in pattern files doesn't affect matching."""
-        (tmp_path / ".gitignore").write_text("*.log   \n")
+        """Unescaped trailing whitespace doesn't affect matching."""
+        (tmp_path / ".gitignore").write_text("*.log   \n  *.pyc\n")
         resolver = IgnoreResolver(tmp_path)
         resolver.enter_directory("")
         assert resolver.is_ignored("debug.log") is True
+        assert resolver.is_ignored("module.pyc") is True
 
-    def test_empty_gitignore(self, tmp_path: Path) -> None:
-        (tmp_path / ".gitignore").write_text("")
+    def test_escaped_trailing_space_patterns(self, tmp_path: Path) -> None:
+        """Escaped trailing spaces are preserved through reader to resolver."""
+        (tmp_path / ".gitignore").write_text("ignoretrailingspace \nnotignoredspace\\ \n")
         resolver = IgnoreResolver(tmp_path)
         resolver.enter_directory("")
-        assert resolver.is_ignored("main.py") is False
+        # Unescaped trailing space is stripped by pathspec — matches without space.
+        assert resolver.is_ignored("ignoretrailingspace") is True
+        assert resolver.is_ignored("ignoretrailingspace ") is False
+        # Escaped trailing space is preserved — matches WITH space only.
+        assert resolver.is_ignored("notignoredspace ") is True
+        assert resolver.is_ignored("notignoredspace") is False
+
+    def test_negation_with_wildcard_directory(self, tmp_path: Path) -> None:
+        """Negation works with wildcard directory patterns."""
+        (tmp_path / ".gitignore").write_text("*/backup/*\n!*/backup/backup.sh\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        assert resolver.is_ignored("project/backup/data.zip") is True
+        assert resolver.is_ignored("project/backup/backup.sh") is False
+        assert resolver.is_ignored("other/backup/old.tar") is True
+        assert resolver.is_ignored("other/backup/backup.sh") is False
+
+    def test_directory_negation_with_gitkeep(self, tmp_path: Path) -> None:
+        """Complex data directory pattern with directory-only negation.
+
+        Note: git un-ignores directories via ``!data/**/`` but
+        GitIgnoreSpec does not honour this negation for directory paths
+        ending in ``/``.  We test the actual GitIgnoreSpec behaviour here
+        and document the deviation in the git compliance suite.
+        """
+        (tmp_path / ".gitignore").write_text("data/**\n!data/**/\n!.gitkeep\n!data/raw/*\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        # GitIgnoreSpec does NOT un-ignore directories via !data/**/ —
+        # this diverges from git (which does un-ignore them).
+        assert resolver.is_ignored("data/raw/") is True
+        assert resolver.is_ignored("data/processed/") is True
+        # .gitkeep is un-ignored globally.
+        assert resolver.is_ignored("data/raw/.gitkeep") is False
+        # raw/* is un-ignored.
+        assert resolver.is_ignored("data/raw/raw_file.csv") is False
+        # processed files remain ignored.
+        assert resolver.is_ignored("data/processed/processed_file.csv") is True
+
+    def test_dir_ignored_pruning_caveat(self, tmp_path: Path) -> None:
+        """is_dir_ignored returns True even when files inside are re-included.
+
+        Note: git 2.48.1 does NOT allow re-inclusion from excluded parent
+        directories (build/keep.txt stays ignored). GitIgnoreSpec diverges
+        here — it allows the negation. We document this known deviation.
+        """
+        (tmp_path / ".gitignore").write_text("build/\n!build/keep.txt\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        # The directory itself matches the ignore pattern.
+        assert resolver.is_dir_ignored("build") is True
+        # GitIgnoreSpec allows re-inclusion (more permissive than git).
+        assert resolver.is_ignored("build/keep.txt") is False
+        assert resolver.is_ignored("build/output.o") is True
+
+    def test_wildcard_contents_pattern_no_dir_pruning(self, tmp_path: Path) -> None:
+        """folder/* ignores contents but NOT the dir — is_dir_ignored returns False."""
+        (tmp_path / ".gitignore").write_text("folder/*\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        # The directory itself does NOT match folder/*.
+        assert resolver.is_dir_ignored("folder") is False
+        # Files inside are ignored.
+        assert resolver.is_ignored("folder/file.txt") is True
+        assert resolver.is_ignored("folder/sub/deep.txt") is True
+
+    def test_wildcard_contents_with_negation(self, tmp_path: Path) -> None:
+        """folder/* + negation of a direct child correctly un-ignores it."""
+        (tmp_path / ".gitignore").write_text("folder/*\n!folder/keep.txt\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        assert resolver.is_dir_ignored("folder") is False
+        assert resolver.is_ignored("folder/file.txt") is True
+        assert resolver.is_ignored("folder/keep.txt") is False
+
+    def test_cross_layer_pruning_caveat(self, tmp_path: Path) -> None:
+        """Pruning can miss cross-layer negation of an ignored directory."""
+        (tmp_path / ".gitignore").write_text("!build/keep.txt\n")
+        resolver = IgnoreResolver(tmp_path, default_patterns=["build/"])
+        resolver.enter_directory("")
+        # Defaults layer ignores build/ — is_dir_ignored returns True.
+        assert resolver.is_dir_ignored("build") is True
+        # But the gitignore layer un-ignores a file inside.
+        assert resolver.is_ignored("build/keep.txt") is False
+        assert resolver.is_ignored("build/other.txt") is True

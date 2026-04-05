@@ -31,8 +31,7 @@ class IgnoreResolver:
     Args:
         root: Absolute path to the repository root.
         default_patterns: Patterns treated as lowest-priority defaults.
-            Empty by default — the library assumes nothing about what
-            callers want to ignore.
+            Empty by default.
         custom_ignore_filenames: Names of custom ignore files to look
             for in the repository root. Empty by default.
 
@@ -90,10 +89,10 @@ class IgnoreResolver:
     def enter_directory(self, rel_dir: str) -> None:
         """Register a ``.gitignore`` if one exists in the given directory.
 
-        Called by the scanner as it enters each directory during
-        traversal. If a ``.gitignore`` file is found, its patterns are
-        stored as a new layer scoped to ``rel_dir``. Repeated calls
-        for the same directory are safely ignored.
+        Call this as you enter each directory during traversal. If a
+        ``.gitignore`` file is found, its patterns are stored as a new
+        layer scoped to ``rel_dir``. Repeated calls for the same
+        directory are safely ignored.
 
         Args:
             rel_dir: POSIX-style path relative to the repo root.
@@ -154,16 +153,21 @@ class IgnoreResolver:
         return result is True
 
     def is_dir_ignored(self, rel_dir: str) -> bool:
-        """Check whether a directory should be pruned from traversal.
+        """Check whether a directory matches an ignore pattern.
 
-        Appends a trailing ``/`` so that directory-only gitignore
-        patterns (e.g., ``build/``) match correctly.
+        Appends a trailing ``/`` so that directory-only patterns
+        (e.g., ``build/``) match correctly.  Commonly used to prune
+        ignored subtrees during traversal.
+
+        Content-only patterns like ``folder/*`` do not match the
+        directory itself, so ``is_dir_ignored`` returns ``False`` and
+        no pruning happens.
 
         Args:
             rel_dir: POSIX-style directory path relative to the repo root.
 
         Returns:
-            ``True`` if the directory should be pruned.
+            ``True`` if the directory matches an ignore pattern.
         """
         return self.is_ignored(rel_dir.rstrip("/") + "/")
 
