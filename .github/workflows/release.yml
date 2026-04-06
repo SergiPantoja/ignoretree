@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # Required for trusted publishing (OIDC)
+      contents: read  # Required to read the repository for building
     environment:
       name: pypi
     steps:
