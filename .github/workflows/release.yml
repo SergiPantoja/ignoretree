@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+jobs:
+  # Re-run the full CI pipeline (lint, type-check, test) as a safety gate.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build-and-publish:
+    name: Build & Publish to PyPI
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for trusted publishing (OIDC)
+    environment:
+      name: pypi
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv build
+
+      # Upload artifacts so the github-release job can attach them.
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: GitHub Release
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required to create releases
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            Release ${{ github.ref_name }}.
+
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for details.
+          generate_release_notes: false

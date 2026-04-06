@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Allow the release workflow to call this workflow's jobs.
+  workflow_call:
 
 # If a new commit is pushed to the same branch/PR, cancel the in-progress run
 # to save CI minutes. The group key ensures only one run per branch/PR.
@@ -68,6 +70,13 @@ jobs:
 
       # Runs pytest. Coverage flags (--cov=ignoretree, --cov-report=term-missing,
       # --cov-report=xml) are configured in pyproject.toml [tool.pytest.ini_options],
-      # so no flags needed here. The xml report (coverage.xml) is available for
-      # future codecov upload.
+      # so no flags needed here.
       - run: uv run pytest
+
+      # Upload coverage from a single Python version to avoid duplicates.
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
