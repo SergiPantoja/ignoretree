@@ -8,7 +8,7 @@ authors = [
     { name = "SergiPantoja", email = "62522545+SergiPantoja@users.noreply.github.com" }
 ]
 requires-python = ">=3.11"
-keywords = ["gitignore", "ignore", "pathspec", "pattern-matching", "gitignore-patterns"]
+keywords = ["gitignore", "ignore", "pathspec", "gitignore-patterns", "layered-resolution"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
