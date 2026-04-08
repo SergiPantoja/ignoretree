@@ -1,5 +1,10 @@
 # ignoretree
 
+[![CI](https://github.com/SergiPantoja/ignoretree/actions/workflows/ci.yml/badge.svg)](https://github.com/SergiPantoja/ignoretree/actions/workflows/ci.yml)
+[![PyPI - Version](https://img.shields.io/pypi/v/ignoretree)](https://pypi.org/project/ignoretree/)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ignoretree)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Layered gitignore-compatible ignore pattern resolution for Python.
 
 I built this because I needed to resolve ignore patterns across multiple layers (default patterns, `.gitignore`, `.git/info/exclude`, custom ignore files) in my projects, and couldn't find a library that did that. [pathspec](https://github.com/cpburnz/python-pathspec) handles pattern matching well, but you're on your own for layered precedence, nested `.gitignore` scoping, and figuring out *which* pattern caused a file to be ignored.
