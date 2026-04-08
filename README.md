@@ -33,17 +33,39 @@ Requires Python 3.11+.
 ## Quick Start
 
 ```python
-import os
 from pathlib import Path
-
 from ignoretree import IgnoreResolver
 
-root = Path("/path/to/repo")
 resolver = IgnoreResolver(
-    root=root,
-    default_patterns=["*.pyc", "__pycache__/", ".git/"], # optional
+    root=Path("/path/to/repo"),
+    default_patterns=["*.pyc", "__pycache__/", ".git/"],  # optional
     custom_ignore_filenames=[".myignore"],  # optional
 )
+
+# Check a single file (`auto_enter=True` loads .gitignore files along the path automatically):
+resolver.is_ignored("src/debug.log", auto_enter=True)  # True or False
+```
+
+### Bulk load
+
+If you're going to check many files, load all `.gitignore` files upfront:
+
+```python
+resolver.load_all()  # walks the repo, discovers all .gitignore files
+
+resolver.is_ignored("src/debug.log")
+resolver.is_ignored("tests/conftest.py")
+```
+
+### Walker integration
+
+For full control during directory traversal, call `enter_directory()` as you go. This lets you prune ignored directories so `os.walk` doesn't descend into them:
+
+```python
+import os
+
+root = Path("/path/to/repo")
+resolver = IgnoreResolver(root, default_patterns=["*.pyc", "__pycache__/", ".git/"])
 
 for dirpath, dirnames, filenames in os.walk(root):
     rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
@@ -64,8 +86,6 @@ for dirpath, dirnames, filenames in os.walk(root):
             print(rel_path)
 ```
 
-> Note: You can use `Path.walk()` instead of `os.walk()` in Python 3.12+
-
 ### Debugging with `explain()`
 
 When you need to know *why* a file is ignored (or not):
@@ -79,6 +99,8 @@ decision = resolver.explain("src/main.py")
 print(decision)
 # IgnoreDecision(ignored=False, source=None)
 ```
+
+Both `explain()` and `explain_dir()` return an `IgnoreDecision` with the winning pattern source. They also support `auto_enter=True` for on-demand loading.
 
 Works well with standard logging:
 
@@ -94,6 +116,16 @@ for path in paths_to_check:
 ```
 
 See the [examples/](examples/) directory for runnable scripts.
+
+## Usage Modes
+
+| Mode | Method | When to use |
+|------|--------|-------------|
+| On-demand | `is_ignored(..., auto_enter=True)` | Checking one or a few files. Loads `.gitignore` files along the path on demand. |
+| Bulk | `load_all()` + `is_ignored()` | Checking many files. Discovers all `.gitignore` files upfront. |
+| Walker | `enter_directory()` + `is_ignored()` | During `os.walk()` traversal. Maximum control over pruning. |
+
+All three modes support defaults, `.git/info/exclude`, nested `.gitignore` scoping, and custom ignore files. The difference is how and when `.gitignore` files are loaded.
 
 ## Layer Precedence
 

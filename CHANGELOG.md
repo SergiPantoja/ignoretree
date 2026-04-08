@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `explain()` and `explain_dir()` for debug traceability — returns the winning `PatternSource` (file, line, pattern) that determined the ignore decision.
+- `load_all()` for bulk `.gitignore` discovery — walks the repo tree and loads all `.gitignore` files upfront, with pruning of ignored directories.
+- `auto_enter` keyword parameter on `is_ignored()`, `is_dir_ignored()`, `explain()`, `explain_dir()` — when `True`, loads only the ancestor `.gitignore` files needed for the queried path on demand.
 
 ## [0.1.0] - 2026-04-06
 

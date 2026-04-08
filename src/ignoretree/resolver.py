@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -110,7 +111,7 @@ class IgnoreResolver:
         if patterns:
             self._gitignore_layers.append((rel_dir, GitIgnoreSpec.from_lines(patterns), sources))
 
-    def is_ignored(self, rel_path: str) -> bool:
+    def is_ignored(self, rel_path: str, *, auto_enter: bool = False) -> bool:
         """Check whether a file path should be ignored.
 
         Evaluates the path against all layers in priority order. The
@@ -118,13 +119,19 @@ class IgnoreResolver:
 
         Args:
             rel_path: POSIX-style path relative to the repository root.
+            auto_enter: If ``True``, automatically load ``.gitignore``
+                files along the ancestor directories of ``rel_path``
+                before checking. Useful for one-off checks without
+                prior :meth:`enter_directory` or :meth:`load_all` calls.
 
         Returns:
             ``True`` if the path should be ignored.
         """
+        if auto_enter:
+            self._enter_ancestors(rel_path)
         return self._resolve(rel_path).ignored
 
-    def is_dir_ignored(self, rel_dir: str) -> bool:
+    def is_dir_ignored(self, rel_dir: str, *, auto_enter: bool = False) -> bool:
         """Check whether a directory matches an ignore pattern.
 
         Appends a trailing ``/`` so that directory-only patterns
@@ -137,13 +144,17 @@ class IgnoreResolver:
 
         Args:
             rel_dir: POSIX-style directory path relative to the repo root.
+            auto_enter: If ``True``, automatically load ``.gitignore``
+                files along the ancestor directories before checking.
 
         Returns:
             ``True`` if the directory matches an ignore pattern.
         """
+        if auto_enter:
+            self._enter_ancestors(rel_dir.rstrip("/"))
         return self.is_ignored(rel_dir.rstrip("/") + "/")
 
-    def explain(self, rel_path: str) -> IgnoreDecision:
+    def explain(self, rel_path: str, *, auto_enter: bool = False) -> IgnoreDecision:
         """Explain why a path is ignored or included.
 
         Same evaluation as :meth:`is_ignored` but returns an
@@ -151,14 +162,18 @@ class IgnoreResolver:
 
         Args:
             rel_path: POSIX-style path relative to the repository root.
+            auto_enter: If ``True``, automatically load ``.gitignore``
+                files along the ancestor directories before checking.
 
         Returns:
-            ``IgnoreDecision`` An object indicating whether the path is
-            ignored and which pattern (if any) determined the result.
+            IgnoreDecision: An object indicating whether the path is ignored
+            and which pattern (if any) determined the result.
         """
+        if auto_enter:
+            self._enter_ancestors(rel_path)
         return self._resolve(rel_path)
 
-    def explain_dir(self, rel_dir: str) -> IgnoreDecision:
+    def explain_dir(self, rel_dir: str, *, auto_enter: bool = False) -> IgnoreDecision:
         """Explain why a directory is ignored or included.
 
         Like :meth:`explain` but appends a trailing ``/`` for
@@ -166,11 +181,49 @@ class IgnoreResolver:
 
         Args:
             rel_dir: POSIX-style directory path relative to the repo root.
+            auto_enter: If ``True``, automatically load ``.gitignore``
+                files along the ancestor directories before checking.
 
         Returns:
-            ``IgnoreDecision`` with source information.
+            IgnoreDecision: An object indicating whether the path is ignored
+            and which pattern (if any) determined the result.
         """
+        if auto_enter:
+            self._enter_ancestors(rel_dir.rstrip("/"))
         return self._resolve(rel_dir.rstrip("/") + "/")
+
+    def load_all(self) -> None:
+        """Discover and load all ``.gitignore`` files in the repository.
+
+        Walks the directory tree starting from root, calling
+        :meth:`enter_directory` for every non-ignored directory. After
+        this call, :meth:`is_ignored` and :meth:`explain` work for any
+        path without additional :meth:`enter_directory` calls.
+
+        Ignored directories are pruned during the walk, so large
+        ignored subtrees (``node_modules/``, ``.git/``, etc.) are
+        skipped.
+        """
+        for dirpath, dirnames, _filenames in os.walk(self._root):
+            rel_dir = os.path.relpath(dirpath, self._root).replace(os.sep, "/")
+            if rel_dir == ".":
+                rel_dir = ""
+
+            self.enter_directory(rel_dir)
+
+            # Prune ignored directories (modifies dirnames in-place for os.walk).
+            dirnames[:] = [
+                d for d in dirnames if not self.is_dir_ignored(f"{rel_dir}/{d}" if rel_dir else d)
+            ]
+
+    def _enter_ancestors(self, rel_path: str) -> None:
+        """Enter all ancestor directories of ``rel_path``."""
+        self.enter_directory("")
+
+        parts = rel_path.split("/")
+        for i in range(1, len(parts)):
+            ancestor = "/".join(parts[:i])
+            self.enter_directory(ancestor)
 
     def _resolve(self, rel_path: str) -> IgnoreDecision:
         """Evaluate *rel_path* against all layers and return the decision."""

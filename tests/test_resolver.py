@@ -437,3 +437,181 @@ class TestExplain:
         resolver.enter_directory("")
         for path in ["debug.log", "important.log", "main.py", "module.pyc", "build/"]:
             assert resolver.explain(path).ignored == resolver.is_ignored(path)
+
+
+# ---------------------------------------------------------------------------
+# load_all() — bulk discovery
+# ---------------------------------------------------------------------------
+
+
+class TestLoadAll:
+    """Tests for load_all() bulk gitignore discovery."""
+
+    def test_loads_all_gitignores(self, tmp_path: Path) -> None:
+        """load_all() discovers nested .gitignore files without manual enter_directory."""
+        (tmp_path / "src" / "lib").mkdir(parents=True)
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / "src" / ".gitignore").write_text("*.bak\n")
+        (tmp_path / "src" / "lib" / ".gitignore").write_text("*.dump\n")
+
+        resolver = IgnoreResolver(tmp_path)
+        resolver.load_all()
+
+        assert resolver.is_ignored("app.log") is True
+        assert resolver.is_ignored("src/file.bak") is True
+        assert resolver.is_ignored("src/lib/core.dump") is True
+        assert resolver.is_ignored("src/main.py") is False
+
+    def test_prunes_ignored_directories(self, tmp_path: Path) -> None:
+        """load_all() doesn't descend into ignored directories."""
+        (tmp_path / "build" / "sub").mkdir(parents=True)
+        (tmp_path / ".gitignore").write_text("build/\n")
+        (tmp_path / "build" / ".gitignore").write_text("*.o\n")
+
+        resolver = IgnoreResolver(tmp_path)
+        resolver.load_all()
+
+        # build/ is ignored and pruned — its .gitignore is never loaded.
+        assert resolver.is_dir_ignored("build") is True
+        assert "build" not in resolver._entered_dirs
+
+    def test_defaults_and_custom_with_load_all(self, tmp_path: Path) -> None:
+        """Defaults and custom files work alongside load_all()."""
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / ".myignore").write_text("*.draft\n")
+
+        resolver = IgnoreResolver(
+            tmp_path,
+            default_patterns=["*.pyc"],
+            custom_ignore_filenames=[".myignore"],
+        )
+        resolver.load_all()
+
+        assert resolver.is_ignored("module.pyc") is True
+        assert resolver.is_ignored("notes.draft") is True
+        assert resolver.is_ignored("app.log") is True
+        assert resolver.is_ignored("main.py") is False
+
+    def test_load_all_idempotent(self, tmp_path: Path) -> None:
+        """Calling load_all() twice doesn't duplicate layers."""
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.load_all()
+        initial_layers = len(resolver._gitignore_layers)
+        resolver.load_all()
+        assert len(resolver._gitignore_layers) == initial_layers
+
+    def test_load_all_no_gitignore(self, tmp_path: Path) -> None:
+        """load_all() works fine when no .gitignore files exist."""
+        (tmp_path / "src").mkdir()
+        resolver = IgnoreResolver(tmp_path)
+        resolver.load_all()
+        assert resolver.is_ignored("src/main.py") is False
+
+    def test_load_all_explain_works(self, tmp_path: Path) -> None:
+        """explain() works correctly after load_all()."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / ".gitignore").write_text("*.tmp\n")
+
+        resolver = IgnoreResolver(tmp_path)
+        resolver.load_all()
+
+        decision = resolver.explain("src/debug.tmp")
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file="src/.gitignore", line=1, pattern="*.tmp")
+
+
+# ---------------------------------------------------------------------------
+# auto_enter — on-demand .gitignore loading
+# ---------------------------------------------------------------------------
+
+
+class TestAutoEnter:
+    """Tests for auto_enter=True on-demand .gitignore loading."""
+
+    def test_is_ignored_auto_enter_loads_ancestors(self, tmp_path: Path) -> None:
+        """auto_enter loads .gitignore files along the path."""
+        (tmp_path / "src" / "lib").mkdir(parents=True)
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / "src" / ".gitignore").write_text("*.bak\n")
+
+        resolver = IgnoreResolver(tmp_path)
+        # No enter_directory calls needed.
+        assert resolver.is_ignored("src/lib/app.log", auto_enter=True) is True
+        assert resolver.is_ignored("src/file.bak", auto_enter=True) is True
+        assert resolver.is_ignored("src/main.py", auto_enter=True) is False
+
+    def test_auto_enter_caches_entered_dirs(self, tmp_path: Path) -> None:
+        """Repeated auto_enter calls for the same prefix don't re-enter directories."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / ".gitignore").write_text("*.tmp\n")
+        resolver = IgnoreResolver(tmp_path)
+
+        resolver.is_ignored("src/a.tmp", auto_enter=True)
+        entered_after_first = len(resolver._entered_dirs)
+
+        resolver.is_ignored("src/b.tmp", auto_enter=True)
+        assert len(resolver._entered_dirs) == entered_after_first
+
+    def test_auto_enter_with_defaults(self, tmp_path: Path) -> None:
+        """Defaults layer works with auto_enter."""
+        resolver = IgnoreResolver(tmp_path, default_patterns=["*.pyc"])
+        assert resolver.is_ignored("module.pyc", auto_enter=True) is True
+        assert resolver.is_ignored("main.py", auto_enter=True) is False
+
+    def test_auto_enter_with_custom_files(self, tmp_path: Path) -> None:
+        """Custom ignore files work with auto_enter."""
+        (tmp_path / ".myignore").write_text("*.draft\n")
+        resolver = IgnoreResolver(tmp_path, custom_ignore_filenames=[".myignore"])
+        assert resolver.is_ignored("notes.draft", auto_enter=True) is True
+
+    def test_is_dir_ignored_auto_enter(self, tmp_path: Path) -> None:
+        (tmp_path / ".gitignore").write_text("build/\n")
+        resolver = IgnoreResolver(tmp_path)
+        assert resolver.is_dir_ignored("build", auto_enter=True) is True
+        assert resolver.is_dir_ignored("src", auto_enter=True) is False
+
+    def test_explain_auto_enter(self, tmp_path: Path) -> None:
+        """explain with auto_enter loads ancestors then returns full decision."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / ".gitignore").write_text("*.tmp\n")
+
+        resolver = IgnoreResolver(tmp_path)
+        decision = resolver.explain("src/debug.tmp", auto_enter=True)
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file="src/.gitignore", line=1, pattern="*.tmp")
+
+    def test_explain_dir_auto_enter(self, tmp_path: Path) -> None:
+        (tmp_path / ".gitignore").write_text("build/\n")
+        resolver = IgnoreResolver(tmp_path)
+        decision = resolver.explain_dir("build", auto_enter=True)
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file=".gitignore", line=1, pattern="build/")
+
+    def test_auto_enter_root_file(self, tmp_path: Path) -> None:
+        """auto_enter on a root-level file works (no parent directories to enter)."""
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        resolver = IgnoreResolver(tmp_path)
+        assert resolver.is_ignored("debug.log", auto_enter=True) is True
+        assert resolver.is_ignored("main.py", auto_enter=True) is False
+
+    def test_auto_enter_consistent_with_enter_directory(self, tmp_path: Path) -> None:
+        """auto_enter and manual enter_directory produce the same results."""
+        (tmp_path / "src" / "lib").mkdir(parents=True)
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / "src" / ".gitignore").write_text("*.bak\n!keep.bak\n")
+
+        paths = ["src/lib/app.log", "src/file.bak", "src/keep.bak", "src/main.py"]
+
+        # auto_enter resolver.
+        auto = IgnoreResolver(tmp_path)
+        auto_results = [auto.is_ignored(p, auto_enter=True) for p in paths]
+
+        # Manual resolver.
+        manual = IgnoreResolver(tmp_path)
+        manual.enter_directory("")
+        manual.enter_directory("src")
+        manual.enter_directory("src/lib")
+        manual_results = [manual.is_ignored(p) for p in paths]
+
+        assert auto_results == manual_results
