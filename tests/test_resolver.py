@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ignoretree import IgnoreResolver
+from ignoretree import IgnoreDecision, IgnoreResolver, PatternSource
 
 # ---------------------------------------------------------------------------
 # Default patterns layer
@@ -348,3 +348,92 @@ class TestEdgeCases:
         # But the gitignore layer un-ignores a file inside.
         assert resolver.is_ignored("build/keep.txt") is False
         assert resolver.is_ignored("build/other.txt") is True
+
+
+# ---------------------------------------------------------------------------
+# explain() source tracking
+# ---------------------------------------------------------------------------
+
+
+class TestExplain:
+    """Tests for explain() and explain_dir() source tracking."""
+
+    def test_no_match_returns_not_ignored_no_source(self, tmp_path: Path) -> None:
+        resolver = IgnoreResolver(tmp_path)
+        decision = resolver.explain("main.py")
+        assert decision == IgnoreDecision(ignored=False, source=None)
+
+    def test_default_pattern_source(self, tmp_path: Path) -> None:
+        resolver = IgnoreResolver(tmp_path, default_patterns=["*.pyc"])
+        decision = resolver.explain("module.pyc")
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file="<defaults>", line=None, pattern="*.pyc")
+
+    def test_info_exclude_source(self, tmp_path: Path) -> None:
+        exclude_dir = tmp_path / ".git" / "info"
+        exclude_dir.mkdir(parents=True)
+        (exclude_dir / "exclude").write_text("*.secret\n")
+        resolver = IgnoreResolver(tmp_path)
+        decision = resolver.explain("credentials.secret")
+        assert decision.ignored is True
+        assert decision.source == PatternSource(
+            file=".git/info/exclude", line=1, pattern="*.secret"
+        )
+
+    def test_gitignore_source(self, tmp_path: Path) -> None:
+        (tmp_path / ".gitignore").write_text("# comment\n*.log\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        decision = resolver.explain("debug.log")
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file=".gitignore", line=2, pattern="*.log")
+
+    def test_nested_gitignore_source(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / ".gitignore").write_text("*.tmp\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("src")
+        decision = resolver.explain("src/debug.tmp")
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file="src/.gitignore", line=1, pattern="*.tmp")
+
+    def test_custom_file_source(self, tmp_path: Path) -> None:
+        (tmp_path / ".myignore").write_text("*.draft\n")
+        resolver = IgnoreResolver(tmp_path, custom_ignore_filenames=[".myignore"])
+        decision = resolver.explain("notes.draft")
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file=".myignore", line=1, pattern="*.draft")
+
+    def test_negation_source(self, tmp_path: Path) -> None:
+        (tmp_path / ".gitignore").write_text("*.log\n!important.log\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        decision = resolver.explain("important.log")
+        assert decision.ignored is False
+        assert decision.source == PatternSource(file=".gitignore", line=2, pattern="!important.log")
+
+    def test_higher_layer_wins(self, tmp_path: Path) -> None:
+        """Custom layer overrides .gitignore — explain reports the winning source."""
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / ".myignore").write_text("!*.log\n")
+        resolver = IgnoreResolver(tmp_path, custom_ignore_filenames=[".myignore"])
+        resolver.enter_directory("")
+        decision = resolver.explain("debug.log")
+        assert decision.ignored is False
+        assert decision.source == PatternSource(file=".myignore", line=1, pattern="!*.log")
+
+    def test_explain_dir(self, tmp_path: Path) -> None:
+        (tmp_path / ".gitignore").write_text("build/\n")
+        resolver = IgnoreResolver(tmp_path)
+        resolver.enter_directory("")
+        decision = resolver.explain_dir("build")
+        assert decision.ignored is True
+        assert decision.source == PatternSource(file=".gitignore", line=1, pattern="build/")
+
+    def test_explain_consistent_with_is_ignored(self, tmp_path: Path) -> None:
+        """explain().ignored always matches is_ignored() for the same path."""
+        (tmp_path / ".gitignore").write_text("*.log\n!important.log\nbuild/\n")
+        resolver = IgnoreResolver(tmp_path, default_patterns=["*.pyc"])
+        resolver.enter_directory("")
+        for path in ["debug.log", "important.log", "main.py", "module.pyc", "build/"]:
+            assert resolver.explain(path).ignored == resolver.is_ignored(path)
