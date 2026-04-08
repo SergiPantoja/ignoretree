@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `explain()` and `explain_dir()` for debug traceability — returns the winning `PatternSource` (file, line, pattern) that determined the ignore decision.
+
 ## [0.1.0] - 2026-04-06
 
 ### Added

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pathspec import GitIgnoreSpec
 
-from ignoretree.models import PatternSource
+from ignoretree.models import IgnoreDecision, PatternSource
 from ignoretree.reader import read_ignore_file
 
 
@@ -122,35 +122,7 @@ class IgnoreResolver:
         Returns:
             ``True`` if the path should be ignored.
         """
-        result: bool | None = None
-
-        # Layer 1: defaults.
-        if self._default_spec is not None:
-            decision = self._check_spec(self._default_spec, rel_path)
-            if decision is not None:
-                result = decision
-
-        # Layer 2: .git/info/exclude.
-        if self._exclude_spec is not None:
-            decision = self._check_spec(self._exclude_spec, rel_path)
-            if decision is not None:
-                result = decision
-
-        # Layer 3: .gitignore layers (root-to-deepest).
-        for dir_prefix, spec, _sources in self._gitignore_layers:
-            if not dir_prefix or rel_path.startswith(dir_prefix + "/"):
-                scoped = rel_path[len(dir_prefix) + 1 :] if dir_prefix else rel_path
-                decision = self._check_spec(spec, scoped)
-                if decision is not None:
-                    result = decision
-
-        # Layer 4: custom ignore files.
-        if self._custom_spec is not None:
-            decision = self._check_spec(self._custom_spec, rel_path)
-            if decision is not None:
-                result = decision
-
-        return result is True
+        return self._resolve(rel_path).ignored
 
     def is_dir_ignored(self, rel_dir: str) -> bool:
         """Check whether a directory matches an ignore pattern.
@@ -171,7 +143,79 @@ class IgnoreResolver:
         """
         return self.is_ignored(rel_dir.rstrip("/") + "/")
 
+    def explain(self, rel_path: str) -> IgnoreDecision:
+        """Explain why a path is ignored or included.
+
+        Same evaluation as :meth:`is_ignored` but returns an
+        :class:`IgnoreDecision` with the winning pattern source.
+
+        Args:
+            rel_path: POSIX-style path relative to the repository root.
+
+        Returns:
+            ``IgnoreDecision`` An object indicating whether the path is
+            ignored and which pattern (if any) determined the result.
+        """
+        return self._resolve(rel_path)
+
+    def explain_dir(self, rel_dir: str) -> IgnoreDecision:
+        """Explain why a directory is ignored or included.
+
+        Like :meth:`explain` but appends a trailing ``/`` for
+        directory-only pattern matching.
+
+        Args:
+            rel_dir: POSIX-style directory path relative to the repo root.
+
+        Returns:
+            ``IgnoreDecision`` with source information.
+        """
+        return self._resolve(rel_dir.rstrip("/") + "/")
+
+    def _resolve(self, rel_path: str) -> IgnoreDecision:
+        """Evaluate *rel_path* against all layers and return the decision."""
+        result: bool | None = None
+        source: PatternSource | None = None
+
+        # Layer 1: defaults.
+        if self._default_spec is not None:
+            hit = self._check_spec(self._default_spec, rel_path, self._default_sources)
+            if hit is not None:
+                result, source = hit
+
+        # Layer 2: .git/info/exclude.
+        if self._exclude_spec is not None:
+            hit = self._check_spec(self._exclude_spec, rel_path, self._exclude_sources)
+            if hit is not None:
+                result, source = hit
+
+        # Layer 3: .gitignore layers (root-to-deepest).
+        for dir_prefix, spec, layer_sources in self._gitignore_layers:
+            if not dir_prefix or rel_path.startswith(dir_prefix + "/"):
+                scoped = rel_path[len(dir_prefix) + 1 :] if dir_prefix else rel_path
+                hit = self._check_spec(spec, scoped, layer_sources)
+                if hit is not None:
+                    result, source = hit
+
+        # Layer 4: custom ignore files.
+        if self._custom_spec is not None:
+            hit = self._check_spec(self._custom_spec, rel_path, self._custom_sources)
+            if hit is not None:
+                result, source = hit
+
+        return IgnoreDecision(ignored=result is True, source=source)
+
     @staticmethod
-    def _check_spec(spec: GitIgnoreSpec, path: str) -> bool | None:
-        """Return the ignore decision from a single spec layer."""
-        return spec.check_file(path).include
+    def _check_spec(
+        spec: GitIgnoreSpec, path: str, sources: list[PatternSource]
+    ) -> tuple[bool, PatternSource] | None:
+        """Return ``(include, source)`` if the spec matched, else ``None``."""
+        check = spec.check_file(path)
+        if check.include is None:
+            return None
+        if check.index is None:
+            # Mypy doesnt know that check.include and check.index are linked and
+            # index can only be None if include is None. This error should never
+            # happen at runtime.
+            raise TypeError("pathspec returned include without index")
+        return check.include, sources[check.index]
