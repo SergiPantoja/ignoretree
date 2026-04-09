@@ -1,6 +1,6 @@
 [project]
 name = "ignoretree"
-version = "0.1.0"
+version = "0.2.0"
 description = "Layered gitignore-compatible ignore pattern resolution for Python"
 readme = "README.md"
 license = "MIT"

@@ -86,6 +86,8 @@ for dirpath, dirnames, filenames in os.walk(root):
             print(rel_path)
 ```
 
+> On Python 3.12+, you can use `Path.walk()` instead of `os.walk()`.
+
 ### Debugging with `explain()`
 
 When you need to know *why* a file is ignored (or not):
