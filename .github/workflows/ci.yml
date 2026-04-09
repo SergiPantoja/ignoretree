@@ -76,7 +76,7 @@ jobs:
       # Upload coverage from a single Python version to avoid duplicates.
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: coverage.xml
           fail_ci_if_error: false
