@@ -1,6 +1,7 @@
 # ignoretree
 
 [![CI](https://github.com/SergiPantoja/ignoretree/actions/workflows/ci.yml/badge.svg)](https://github.com/SergiPantoja/ignoretree/actions/workflows/ci.yml)
+![Codecov](https://img.shields.io/codecov/c/github/sergipantoja/ignoretree)
 [![PyPI - Version](https://img.shields.io/pypi/v/ignoretree)](https://pypi.org/project/ignoretree/)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ignoretree)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

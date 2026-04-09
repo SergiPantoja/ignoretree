@@ -26,3 +26,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Git compliance test suite validated against git 2.48–2.53.
 
 [0.1.0]: https://github.com/SergiPantoja/ignoretree/releases/tag/v0.1.0
+[0.2.0]: https://github.com/SergiPantoja/ignoretree/releases/tag/v0.2.0
