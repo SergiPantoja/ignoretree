@@ -19,7 +19,7 @@ jobs:
     environment:
       name: pypi
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv build
 
@@ -40,7 +40,7 @@ jobs:
     permissions:
       contents: write  # Required to create releases
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download dist artifacts
         uses: actions/download-artifact@v8
