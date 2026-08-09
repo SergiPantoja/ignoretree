@@ -25,12 +25,14 @@ jobs:
       # First invocation: lint check (catches errors, import sorting, etc.)
       - uses: astral-sh/ruff-action@v3
         with:
-          args: "check src/ tests/"
+          args: "check"
+          src: "src/ tests/"
 
       # Second invocation: format check (fails if any file isn't formatted)
       - uses: astral-sh/ruff-action@v3
         with:
-          args: "format --check src/ tests/"
+          args: "format --check"
+          src: "src/ tests/"
 
   # Static type checking with mypy in strict mode.
   # Runs with uv to get the full project environment (dependencies + type stubs).
