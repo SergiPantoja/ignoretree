@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Replaced the independent Git compliance checks with differential tests that compare Git decisions and provenance against all ignoretree usage modes.
+- Git test failures now reject unexpected `git check-ignore` exit codes, and known compatibility gaps are tracked as strict expected failures.
+
 ## [0.2.0] - 2026-04-08
 
 ### Added
@@ -25,5 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - GitIgnoreSpec backend for accurate gitignore semantics.
 - Git compliance test suite validated against git 2.48–2.53.
 
+[Unreleased]: https://github.com/SergiPantoja/ignoretree/compare/v0.2.0...HEAD
 [0.1.0]: https://github.com/SergiPantoja/ignoretree/releases/tag/v0.1.0
 [0.2.0]: https://github.com/SergiPantoja/ignoretree/releases/tag/v0.2.0

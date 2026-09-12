@@ -280,44 +280,6 @@ class TestEdgeCases:
         assert resolver.is_ignored("other/backup/old.tar") is True
         assert resolver.is_ignored("other/backup/backup.sh") is False
 
-    def test_directory_negation_with_gitkeep(self, tmp_path: Path) -> None:
-        """Complex data directory pattern with directory-only negation.
-
-        Note: git un-ignores directories via ``!data/**/`` but
-        GitIgnoreSpec does not honour this negation for directory paths
-        ending in ``/``.  We test the actual GitIgnoreSpec behaviour here
-        and document the deviation in the git compliance suite.
-        """
-        (tmp_path / ".gitignore").write_text("data/**\n!data/**/\n!.gitkeep\n!data/raw/*\n")
-        resolver = IgnoreResolver(tmp_path)
-        resolver.enter_directory("")
-        # GitIgnoreSpec does NOT un-ignore directories via !data/**/ —
-        # this diverges from git (which does un-ignore them).
-        assert resolver.is_ignored("data/raw/") is True
-        assert resolver.is_ignored("data/processed/") is True
-        # .gitkeep is un-ignored globally.
-        assert resolver.is_ignored("data/raw/.gitkeep") is False
-        # raw/* is un-ignored.
-        assert resolver.is_ignored("data/raw/raw_file.csv") is False
-        # processed files remain ignored.
-        assert resolver.is_ignored("data/processed/processed_file.csv") is True
-
-    def test_dir_ignored_pruning_caveat(self, tmp_path: Path) -> None:
-        """is_dir_ignored returns True even when files inside are re-included.
-
-        Note: git 2.48.1 does NOT allow re-inclusion from excluded parent
-        directories (build/keep.txt stays ignored). GitIgnoreSpec diverges
-        here — it allows the negation. We document this known deviation.
-        """
-        (tmp_path / ".gitignore").write_text("build/\n!build/keep.txt\n")
-        resolver = IgnoreResolver(tmp_path)
-        resolver.enter_directory("")
-        # The directory itself matches the ignore pattern.
-        assert resolver.is_dir_ignored("build") is True
-        # GitIgnoreSpec allows re-inclusion (more permissive than git).
-        assert resolver.is_ignored("build/keep.txt") is False
-        assert resolver.is_ignored("build/output.o") is True
-
     def test_wildcard_contents_pattern_no_dir_pruning(self, tmp_path: Path) -> None:
         """folder/* ignores contents but NOT the dir — is_dir_ignored returns False."""
         (tmp_path / ".gitignore").write_text("folder/*\n")
