@@ -71,7 +71,11 @@ def _source_tuple(
 def assert_matches_git(repo: Path, cases: Iterable[PathCase]) -> None:
     """Assert every ignoretree usage mode agrees with Git for each path."""
     for case in cases:
-        git_result = git_check_ignore(repo, case.path)
+        # A trailing slash makes ``git check-ignore`` consider patterns that
+        # match directory contents. Traversal decisions need the directory
+        # entry itself, which Git checks without that suffix.
+        git_path = case.path.rstrip("/") if case.is_dir else case.path
+        git_result = git_check_ignore(repo, git_path)
         resolver_results = {mode: _resolve(repo, case, mode) for mode in RESOLVER_MODES}
 
         assert {mode: result.ignored for mode, result in resolver_results.items()} == {
@@ -249,18 +253,21 @@ def test_git_oracle_rejects_git_errors(tmp_path: Path) -> None:
     assert error.value.returncode not in (0, 1)
 
 
-@pytest.mark.xfail(strict=True, reason="H1: ignored-parent handling is fixed in Priority 1")
 def test_ignored_parent_negation_matches_git(git_repo: Path) -> None:
     """A file cannot be re-included while its parent remains ignored."""
+    (git_repo / "build").mkdir()
     (git_repo / ".gitignore").write_text("build/\n!build/keep.txt\n")
 
     assert_matches_git(
         git_repo,
-        [PathCase("build/keep.txt"), PathCase("build/output.o")],
+        [
+            PathCase("build/", is_dir=True),
+            PathCase("build/keep.txt"),
+            PathCase("build/output.o"),
+        ],
     )
 
 
-@pytest.mark.xfail(strict=True, reason="H1: directory negation is fixed in Priority 1")
 def test_directory_negation_matches_git(git_repo: Path) -> None:
     """Directory-only negation must make traversal directories reachable."""
     (git_repo / "data" / "raw").mkdir(parents=True)
@@ -279,7 +286,6 @@ def test_directory_negation_matches_git(git_repo: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="H1: ignored-parent loading is fixed in Priority 1")
 def test_nested_gitignore_below_ignored_parent_matches_git(git_repo: Path) -> None:
     """No mode may apply a nested ignore file below an ignored parent."""
     (git_repo / "build").mkdir()
@@ -287,3 +293,56 @@ def test_nested_gitignore_below_ignored_parent_matches_git(git_repo: Path) -> No
     (git_repo / "build" / ".gitignore").write_text("!keep.txt\n")
 
     assert_matches_git(git_repo, [PathCase("build/keep.txt")])
+
+
+def test_reincluded_parent_allows_descendant_negation(git_repo: Path) -> None:
+    """A descendant can be re-included after each excluded parent is reachable."""
+    (git_repo / "build").mkdir()
+    (git_repo / ".gitignore").write_text("build/\n!build/\nbuild/*\n!build/keep.txt\n")
+
+    assert_matches_git(
+        git_repo,
+        [
+            PathCase("build/", is_dir=True),
+            PathCase("build/keep.txt"),
+            PathCase("build/output.o"),
+        ],
+    )
+
+
+def test_wildcard_contents_parent_barrier_matches_git(git_repo: Path) -> None:
+    """A direct-child negation cannot cross a separately ignored directory."""
+    (git_repo / "folder" / "sub").mkdir(parents=True)
+    (git_repo / ".gitignore").write_text("folder/*\n!folder/keep.txt\n")
+
+    assert_matches_git(
+        git_repo,
+        [
+            PathCase("folder/", is_dir=True),
+            PathCase("folder/file.txt"),
+            PathCase("folder/keep.txt"),
+            PathCase("folder/sub/", is_dir=True),
+            PathCase("folder/sub/deep.txt"),
+        ],
+    )
+
+
+def test_parent_rules_across_native_sources_match_git(git_repo: Path) -> None:
+    """Exclude, root, and nested sources cooperate without crossing a parent barrier."""
+    (git_repo / "artifacts" / "public").mkdir(parents=True)
+    (git_repo / "artifacts" / "private").mkdir()
+    (git_repo / ".git" / "info" / "exclude").write_text("artifacts/\n")
+    (git_repo / ".gitignore").write_text("!artifacts/\nartifacts/*\n!artifacts/public/\n")
+    (git_repo / "artifacts" / "public" / ".gitignore").write_text("*.txt\n!keep.txt\n")
+
+    assert_matches_git(
+        git_repo,
+        [
+            PathCase("artifacts/", is_dir=True),
+            PathCase("artifacts/private/", is_dir=True),
+            PathCase("artifacts/private/keep.txt"),
+            PathCase("artifacts/public/", is_dir=True),
+            PathCase("artifacts/public/drop.txt"),
+            PathCase("artifacts/public/keep.txt"),
+        ],
+    )
