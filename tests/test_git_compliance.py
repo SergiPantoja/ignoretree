@@ -1,224 +1,289 @@
-"""Git compliance tests — validate our expectations against real git.
-
-Every test mirrors a scenario from the main test suite and verifies the
-expected result with ``git check-ignore``.  If git disagrees with our
-expectation, the test here fails and we update the main suite (or
-document the deviation).
-
-Only single-layer ``.gitignore`` scenarios can be validated this way
-because ``git check-ignore`` uses the on-disk ``.gitignore`` files
-directly.  Multi-layer behaviour (defaults, info/exclude, custom files,
-cross-layer negation) is tested in the main suite only.
-"""
+"""Differential tests comparing ignoretree directly with Git."""
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
+import subprocess
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Literal
 
 import pytest
 
-from conftest import GIT_AVAILABLE, git_check_ignore
+from conftest import GIT_AVAILABLE, GitIgnoreResult, GitPatternSource, git_check_ignore
+from ignoretree import IgnoreDecision, IgnoreResolver, PatternSource
+
+if os.environ.get("CI") and not GIT_AVAILABLE:
+    raise RuntimeError("Git is required to run the differential test suite in CI")
 
 pytestmark = pytest.mark.skipif(not GIT_AVAILABLE, reason="git not installed")
 
-
-# ---------------------------------------------------------------------------
-# Basic glob patterns
-# ---------------------------------------------------------------------------
+ResolverMode = Literal["manual", "auto_enter", "load_all"]
+RESOLVER_MODES: tuple[ResolverMode, ...] = ("manual", "auto_enter", "load_all")
 
 
-class TestBasicGlob:
-    """Verify basic glob matching agrees with git."""
+@dataclass(frozen=True, slots=True)
+class PathCase:
+    """A path to compare, with its filesystem kind when relevant."""
 
-    def test_wildcard_extension(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("*.csv\n")
-        assert git_check_ignore(git_repo, "data.csv") is True
-        assert git_check_ignore(git_repo, "sub/data.csv") is True
-        assert git_check_ignore(git_repo, "main.py") is False
-
-    def test_pyc_and_pycache(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("*.pyc\n__pycache__/\n")
-        assert git_check_ignore(git_repo, "module.pyc") is True
-        assert git_check_ignore(git_repo, "__pycache__/something") is True
-        assert git_check_ignore(git_repo, "src/main.py") is False
-
-    def test_log_extension(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("*.log\n")
-        assert git_check_ignore(git_repo, "debug.log") is True
-        assert git_check_ignore(git_repo, "main.py") is False
+    path: str
+    is_dir: bool = False
+    compare_pattern: bool = True
 
 
-# ---------------------------------------------------------------------------
-# Directory patterns
-# ---------------------------------------------------------------------------
+def _enter_ancestors(resolver: IgnoreResolver, path: str) -> None:
+    """Load the same ancestor scopes that ``auto_enter`` loads for a path."""
+    resolver.enter_directory("")
+    parts = PurePosixPath(path.rstrip("/")).parts
+    for depth in range(1, len(parts)):
+        resolver.enter_directory("/".join(parts[:depth]))
 
 
-class TestDirectoryPattern:
-    """Verify trailing-slash directory patterns match git."""
+def _resolve(repo: Path, case: PathCase, mode: ResolverMode) -> IgnoreDecision:
+    """Resolve a path through one fresh ignoretree usage mode."""
+    resolver = IgnoreResolver(repo)
+    clean_path = case.path.rstrip("/")
 
-    def test_dir_pattern_ignores_contents(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("build_output/\n")
-        assert git_check_ignore(git_repo, "build_output/artifact") is True
+    if mode == "manual":
+        _enter_ancestors(resolver, case.path)
+    elif mode == "load_all":
+        resolver.load_all()
 
-    def test_dir_pattern_pycache(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("__pycache__/\n")
-        assert git_check_ignore(git_repo, "__pycache__/module.cpython.pyc") is True
-        assert git_check_ignore(git_repo, "src/__pycache__/module.cpython.pyc") is True
-
-
-# ---------------------------------------------------------------------------
-# Negation patterns
-# ---------------------------------------------------------------------------
+    auto_enter = mode == "auto_enter"
+    if case.is_dir:
+        return resolver.explain_dir(clean_path, auto_enter=auto_enter)
+    return resolver.explain(clean_path, auto_enter=auto_enter)
 
 
-class TestNegation:
-    """Verify negation pattern behaviour matches git."""
-
-    def test_simple_negation(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("*.log\n!important.log\n")
-        assert git_check_ignore(git_repo, "debug.log") is True
-        assert git_check_ignore(git_repo, "important.log") is False
-
-    def test_dir_exclusion_then_negation(self, git_repo: Path) -> None:
-        """build/ + !build/keep.txt — git says parent exclusion is final."""
-        (git_repo / ".gitignore").write_text("build/\n!build/keep.txt\n")
-        assert git_check_ignore(git_repo, "build/keep.txt") is True
-        assert git_check_ignore(git_repo, "build/output.o") is True
-
-    def test_negation_with_wildcard_directory(self, git_repo: Path) -> None:
-        """*/backup/* + negation of a specific file."""
-        (git_repo / ".gitignore").write_text("*/backup/*\n!*/backup/backup.sh\n")
-        assert git_check_ignore(git_repo, "project/backup/data.zip") is True
-        assert git_check_ignore(git_repo, "project/backup/backup.sh") is False
-        assert git_check_ignore(git_repo, "other/backup/old.tar") is True
-        assert git_check_ignore(git_repo, "other/backup/backup.sh") is False
+def _source_tuple(
+    source: GitPatternSource | PatternSource | None,
+    *,
+    compare_pattern: bool,
+) -> tuple[str, int | None, str] | None:
+    """Normalize Git and ignoretree provenance for direct comparison."""
+    if source is None:
+        return None
+    pattern = source.pattern if compare_pattern else "<normalized by Git>"
+    return source.file, source.line, pattern
 
 
-# ---------------------------------------------------------------------------
-# Wildcard content patterns (folder/*)
-# ---------------------------------------------------------------------------
+def assert_matches_git(repo: Path, cases: Iterable[PathCase]) -> None:
+    """Assert every ignoretree usage mode agrees with Git for each path."""
+    for case in cases:
+        git_result = git_check_ignore(repo, case.path)
+        resolver_results = {mode: _resolve(repo, case, mode) for mode in RESOLVER_MODES}
+
+        assert {mode: result.ignored for mode, result in resolver_results.items()} == {
+            mode: git_result.ignored for mode in RESOLVER_MODES
+        }, f"decision mismatch for {case.path!r}: Git returned {git_result!r}"
+        assert {
+            mode: _source_tuple(result.source, compare_pattern=case.compare_pattern)
+            for mode, result in resolver_results.items()
+        } == {
+            mode: _source_tuple(git_result.source, compare_pattern=case.compare_pattern)
+            for mode in RESOLVER_MODES
+        }, f"provenance mismatch for {case.path!r}: Git returned {git_result!r}"
 
 
-class TestWildcardContents:
-    """Verify folder/* vs folder/ semantics match git."""
+@pytest.mark.parametrize(
+    ("patterns", "cases"),
+    [
+        pytest.param(
+            "*.csv\n",
+            [PathCase("data.csv"), PathCase("sub/data.csv"), PathCase("main.py")],
+            id="unanchored-wildcard",
+        ),
+        pytest.param(
+            "/root.log\n*.tmp\n",
+            [PathCase("root.log"), PathCase("sub/root.log"), PathCase("sub/cache.tmp")],
+            id="anchored-and-unanchored",
+        ),
+        pytest.param(
+            "docs/*.txt\n",
+            [PathCase("docs/readme.txt"), PathCase("src/docs/readme.txt")],
+            id="slash-containing",
+        ),
+        pytest.param(
+            "file?.txt\nreport[0-9].csv\n",
+            [
+                PathCase("file1.txt"),
+                PathCase("file10.txt"),
+                PathCase("report7.csv"),
+                PathCase("reportx.csv"),
+            ],
+            id="question-mark-and-range",
+        ),
+        pytest.param(
+            "cache/**\n**/generated.log\n",
+            [
+                PathCase("cache/item.bin"),
+                PathCase("cache/deep/item.bin"),
+                PathCase("src/generated.log"),
+                PathCase("generated.log"),
+            ],
+            id="double-star",
+        ),
+        pytest.param(
+            "build_output/\n__pycache__/\n",
+            [
+                PathCase("build_output/artifact"),
+                PathCase("src/__pycache__/module.pyc"),
+                PathCase("src/main.py"),
+            ],
+            id="directory-patterns",
+        ),
+        pytest.param(
+            "*.log\n!important.log\n",
+            [PathCase("debug.log"), PathCase("important.log"), PathCase("main.py")],
+            id="negation",
+        ),
+        pytest.param(
+            "*/backup/*\n!*/backup/backup.sh\n",
+            [
+                PathCase("project/backup/data.zip"),
+                PathCase("project/backup/backup.sh"),
+                PathCase("other/backup/old.tar"),
+            ],
+            id="wildcard-directory-negation",
+        ),
+        pytest.param(
+            "folder/*\n!folder/keep.txt\n",
+            [
+                PathCase("folder/file.txt"),
+                PathCase("folder/keep.txt"),
+                PathCase("folder/sub/deep.txt"),
+            ],
+            id="wildcard-contents",
+        ),
+        pytest.param(
+            "*.log   \nname\\ \n",
+            [
+                # Git strips the unescaped suffix in verbose output, while
+                # PatternSource intentionally retains the raw source text.
+                PathCase("debug.log", compare_pattern=False),
+                PathCase("name "),
+                PathCase("name"),
+            ],
+            id="trailing-spaces",
+        ),
+        pytest.param(
+            "# comment\n\n\\#literal\n\\!important\n",
+            [
+                PathCase("#literal"),
+                PathCase("!important"),
+                PathCase("comment"),
+            ],
+            id="comments-blanks-and-escaped-specials",
+        ),
+        pytest.param(
+            "café.txt\n日本語.log\n",
+            [PathCase("café.txt"), PathCase("日本語.log"), PathCase("CAFÉ.txt")],
+            id="case-sensitive-unicode",
+        ),
+        pytest.param(
+            "dir with space/*.log\nfile\tname.log\n",
+            [
+                PathCase("dir with space/a file.log"),
+                PathCase("dir/a file.log"),
+                PathCase("file\tname.log"),
+            ],
+            id="nul-delimited-provenance",
+        ),
+    ],
+)
+def test_root_gitignore_matches_git(
+    git_repo: Path,
+    patterns: str,
+    cases: list[PathCase],
+) -> None:
+    """Root patterns produce the same decision and provenance in every mode."""
+    (git_repo / ".gitignore").write_text(patterns)
+    assert_matches_git(git_repo, cases)
 
-    def test_folder_star_ignores_direct_children(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("folder/*\n")
-        assert git_check_ignore(git_repo, "folder/file.txt") is True
 
-    def test_folder_star_vs_deep_path(self, git_repo: Path) -> None:
-        """folder/* matches nested paths in git (not just direct children)."""
-        (git_repo / ".gitignore").write_text("folder/*\n")
-        # git treats folder/* as matching all contents recursively.
-        assert git_check_ignore(git_repo, "folder/sub/deep.txt") is True
+def test_nested_gitignores_match_git(git_repo: Path) -> None:
+    """Nested rules retain Git's scope and root-to-deepest precedence."""
+    (git_repo / "src" / "lib").mkdir(parents=True)
+    (git_repo / ".gitignore").write_text("*.log\n")
+    (git_repo / "src" / ".gitignore").write_text("*.bak\n!audit.log\n")
+    (git_repo / "src" / "lib" / ".gitignore").write_text("*.dump\n")
 
-    def test_folder_star_with_negation(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("folder/*\n!folder/keep.txt\n")
-        assert git_check_ignore(git_repo, "folder/file.txt") is True
-        assert git_check_ignore(git_repo, "folder/keep.txt") is False
-
-
-# ---------------------------------------------------------------------------
-# Complex data directory patterns
-# ---------------------------------------------------------------------------
-
-
-class TestDataDirectoryPattern:
-    """Verify the data/** + negation pattern used for .gitkeep workflows."""
-
-    def test_data_globstar_with_dir_negation(self, git_repo: Path) -> None:
-        """data/** + !data/**/ + !.gitkeep + !data/raw/*"""
-        (git_repo / ".gitignore").write_text("data/**\n!data/**/\n!.gitkeep\n!data/raw/*\n")
-        # Need to create directories so git can resolve them
-        (git_repo / "data" / "raw").mkdir(parents=True)
-        (git_repo / "data" / "processed").mkdir(parents=True)
-
-        # Directories un-ignored by !data/**/
-        assert git_check_ignore(git_repo, "data/raw/") is False
-        assert git_check_ignore(git_repo, "data/processed/") is False
-
-        # .gitkeep un-ignored
-        assert git_check_ignore(git_repo, "data/raw/.gitkeep") is False
-
-        # raw/* un-ignored by !data/raw/*
-        assert git_check_ignore(git_repo, "data/raw/raw_file.csv") is False
-
-        # processed files stay ignored (no negation covers them)
-        assert git_check_ignore(git_repo, "data/processed/processed_file.csv") is True
+    assert_matches_git(
+        git_repo,
+        [
+            PathCase("app.log"),
+            PathCase("src/audit.log"),
+            PathCase("src/debug.log"),
+            PathCase("src/file.bak"),
+            PathCase("file.bak"),
+            PathCase("src/lib/core.dump"),
+            PathCase("src/core.dump"),
+        ],
+    )
 
 
-# ---------------------------------------------------------------------------
-# Trailing whitespace / escaped spaces
-# ---------------------------------------------------------------------------
+def test_git_oracle_distinguishes_negation_from_ignored(git_repo: Path) -> None:
+    """Quiet and verbose Git results are combined without conflating negation."""
+    (git_repo / ".gitignore").write_text("*.log\n!important.log\n")
+
+    assert git_check_ignore(git_repo, "debug.log") == GitIgnoreResult(
+        ignored=True,
+        source=GitPatternSource(file=".gitignore", line=1, pattern="*.log"),
+    )
+    assert git_check_ignore(git_repo, "important.log") == GitIgnoreResult(
+        ignored=False,
+        source=GitPatternSource(file=".gitignore", line=2, pattern="!important.log"),
+    )
+    assert git_check_ignore(git_repo, "main.py") == GitIgnoreResult(
+        ignored=False,
+        source=None,
+    )
 
 
-class TestTrailingWhitespace:
-    """Verify git's handling of trailing whitespace in patterns."""
+def test_git_oracle_rejects_git_errors(tmp_path: Path) -> None:
+    """Git failures are errors, never ordinary nonmatches."""
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        git_check_ignore(tmp_path, "main.py")
 
-    def test_unescaped_trailing_space_stripped(self, git_repo: Path) -> None:
-        """Unescaped trailing whitespace is stripped from patterns."""
-        (git_repo / ".gitignore").write_text("*.log   \n")
-        assert git_check_ignore(git_repo, "debug.log") is True
-
-
-# ---------------------------------------------------------------------------
-# Comments and blank lines
-# ---------------------------------------------------------------------------
+    assert error.value.returncode not in (0, 1)
 
 
-class TestCommentsAndBlanks:
-    """Verify comments and blank lines are properly skipped."""
+@pytest.mark.xfail(strict=True, reason="H1: ignored-parent handling is fixed in Priority 1")
+def test_ignored_parent_negation_matches_git(git_repo: Path) -> None:
+    """A file cannot be re-included while its parent remains ignored."""
+    (git_repo / ".gitignore").write_text("build/\n!build/keep.txt\n")
 
-    def test_comment_only_gitignore(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("# just a comment\n#main.py\n")
-        assert git_check_ignore(git_repo, "main.py") is False
-
-    def test_empty_gitignore(self, git_repo: Path) -> None:
-        (git_repo / ".gitignore").write_text("")
-        assert git_check_ignore(git_repo, "main.py") is False
-
-
-# ---------------------------------------------------------------------------
-# Nested .gitignore scoping
-# ---------------------------------------------------------------------------
+    assert_matches_git(
+        git_repo,
+        [PathCase("build/keep.txt"), PathCase("build/output.o")],
+    )
 
 
-class TestNestedGitignore:
-    """Verify nested .gitignore scoping matches git."""
+@pytest.mark.xfail(strict=True, reason="H1: directory negation is fixed in Priority 1")
+def test_directory_negation_matches_git(git_repo: Path) -> None:
+    """Directory-only negation must make traversal directories reachable."""
+    (git_repo / "data" / "raw").mkdir(parents=True)
+    (git_repo / "data" / "processed").mkdir(parents=True)
+    (git_repo / ".gitignore").write_text("data/**\n!data/**/\n!.gitkeep\n!data/raw/*\n")
 
-    def test_nested_gitignore_only_affects_subtree(self, git_repo: Path) -> None:
-        """A .gitignore in src/ only affects files under src/."""
-        (git_repo / "src").mkdir()
-        (git_repo / "src" / ".gitignore").write_text("*.tmp\n")
-        assert git_check_ignore(git_repo, "src/debug.tmp") is True
-        assert git_check_ignore(git_repo, "debug.tmp") is False
+    assert_matches_git(
+        git_repo,
+        [
+            PathCase("data/raw/", is_dir=True),
+            PathCase("data/processed/", is_dir=True),
+            PathCase("data/raw/.gitkeep"),
+            PathCase("data/raw/raw_file.csv"),
+            PathCase("data/processed/processed_file.csv"),
+        ],
+    )
 
-    def test_deeper_gitignore_negation_overrides_parent(self, git_repo: Path) -> None:
-        """A .gitignore in src/ can negate patterns from root .gitignore."""
-        (git_repo / "src").mkdir()
-        (git_repo / ".gitignore").write_text("*.log\n")
-        (git_repo / "src" / ".gitignore").write_text("!audit.log\n")
-        assert git_check_ignore(git_repo, "debug.log") is True
-        assert git_check_ignore(git_repo, "src/audit.log") is False
-        assert git_check_ignore(git_repo, "src/debug.log") is True
 
-    def test_deep_nesting_three_levels(self, git_repo: Path) -> None:
-        """Three levels of .gitignore files accumulate correctly."""
-        (git_repo / "src" / "lib").mkdir(parents=True)
-        (git_repo / ".gitignore").write_text("*.log\n")
-        (git_repo / "src" / ".gitignore").write_text("*.bak\n")
-        (git_repo / "src" / "lib" / ".gitignore").write_text("*.dump\n")
+@pytest.mark.xfail(strict=True, reason="H1: ignored-parent loading is fixed in Priority 1")
+def test_nested_gitignore_below_ignored_parent_matches_git(git_repo: Path) -> None:
+    """No mode may apply a nested ignore file below an ignored parent."""
+    (git_repo / "build").mkdir()
+    (git_repo / ".gitignore").write_text("build/\n")
+    (git_repo / "build" / ".gitignore").write_text("!keep.txt\n")
 
-        # Root .gitignore: *.log applies everywhere.
-        assert git_check_ignore(git_repo, "app.log") is True
-        assert git_check_ignore(git_repo, "src/app.log") is True
-        assert git_check_ignore(git_repo, "src/lib/app.log") is True
-
-        # src/.gitignore: *.bak applies under src/ only.
-        assert git_check_ignore(git_repo, "src/file.bak") is True
-        assert git_check_ignore(git_repo, "src/lib/file.bak") is True
-        assert git_check_ignore(git_repo, "file.bak") is False
-
-        # src/lib/.gitignore: *.dump applies under src/lib/ only.
-        assert git_check_ignore(git_repo, "src/lib/core.dump") is True
-        assert git_check_ignore(git_repo, "src/core.dump") is False
+    assert_matches_git(git_repo, [PathCase("build/keep.txt")])
