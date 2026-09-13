@@ -47,14 +47,6 @@ resolver = IgnoreResolver(
 resolver.is_ignored("src/debug.log", auto_enter=True)  # True or False
 ```
 
-### Path contract and symlinks
-
-The repository root is resolved to an absolute path when the resolver is created and must be an existing directory. A Git repository is not required.
-
-Query and directory paths are lexical: they do not need to exist, but they must be nonempty `str` values using canonical, root-relative POSIX syntax. Absolute paths, Windows drive or UNC paths, backslashes, NUL characters, repeated separators, and `.` or `..` components are rejected. `enter_directory("")` is the sole empty-path exception for the repository root. Directory APIs accept one trailing slash; file-query APIs do not.
-
-Ignore-file discovery never follows symlinks. Root rules still match a queried symlink path lexically, but `.gitignore`, `.git/info/exclude`, and custom ignore files reached through a symlink are not read. Custom ignore filenames must be unique root-level basenames and cannot be `.git` or `.gitignore`.
-
 ### Bulk load
 
 If you're going to check many files, load all `.gitignore` files upfront:
@@ -149,6 +141,23 @@ Patterns are evaluated across four layers, from lowest to highest priority:
 | 4 (highest) | Custom | Files listed in `custom_ignore_filenames` |
 
 Within each layer, negation patterns (`!`) work per gitignore rules. Across layers, the last layer with a matching pattern wins.
+
+## Paths and symlinks
+
+The repository root must be an existing directory. Ignoretree resolves it to an absolute path when the resolver is created. The directory does not need to be a Git repository.
+
+Paths are matched as written and do not need to exist. Pass them as nonempty `str` values using root-relative POSIX syntax. These forms are not accepted:
+
+- Absolute paths and Windows drive or UNC paths
+- Backslashes and NUL characters
+- Repeated separators
+- `.` and `..` path components
+
+Use `enter_directory("")` for the repository root. This is the only method that accepts an empty path. Directory methods accept one trailing slash. File methods do not.
+
+Ignoretree does not follow symlinks when looking for ignore files. Rules from safe parent directories can still match a symlink path. Ignore files reached through a symlink are not read.
+
+Custom ignore filenames must be unique root-level names. They cannot be `.git` or `.gitignore`.
 
 ## Development
 
