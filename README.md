@@ -77,8 +77,7 @@ for dirpath, dirnames, filenames in os.walk(root):
 
     # Prune ignored directories so os.walk doesn't descend into them.
     dirnames[:] = [
-        d for d in dirnames
-        if not resolver.is_dir_ignored(f"{rel_dir}/{d}" if rel_dir else d)
+        d for d in dirnames if not resolver.is_dir_ignored(f"{rel_dir}/{d}" if rel_dir else d)
     ]
 
     for fname in filenames:
@@ -142,6 +141,23 @@ Patterns are evaluated across four layers, from lowest to highest priority:
 | 4 (highest) | Custom | Files listed in `custom_ignore_filenames` |
 
 Within each layer, negation patterns (`!`) work per gitignore rules. Across layers, the last layer with a matching pattern wins.
+
+## Paths and symlinks
+
+The repository root must be an existing directory. Ignoretree resolves it to an absolute path when the resolver is created. The directory does not need to be a Git repository.
+
+Paths are matched as written and do not need to exist. Pass them as nonempty `str` values using root-relative POSIX syntax. These forms are not accepted:
+
+- Absolute paths and Windows drive or UNC paths
+- Backslashes and NUL characters
+- Repeated separators
+- `.` and `..` path components
+
+Use `enter_directory("")` for the repository root. This is the only method that accepts an empty path. Directory methods accept one trailing slash. File methods do not.
+
+Ignoretree does not follow symlinks when looking for ignore files. Rules from safe parent directories can still match a symlink path. Ignore files reached through a symlink are not read.
+
+Custom ignore filenames must be unique root-level names. They cannot be `.git` or `.gitignore`.
 
 ## Development
 
