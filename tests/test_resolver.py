@@ -439,8 +439,9 @@ class TestExplain:
         (tmp_path / ".gitignore").write_text("*.log\n!important.log\nbuild/\n")
         resolver = IgnoreResolver(tmp_path, default_patterns=["*.pyc"])
         resolver.enter_directory("")
-        for path in ["debug.log", "important.log", "main.py", "module.pyc", "build/"]:
+        for path in ["debug.log", "important.log", "main.py", "module.pyc"]:
             assert resolver.explain(path).ignored == resolver.is_ignored(path)
+        assert resolver.explain_dir("build").ignored == resolver.is_dir_ignored("build")
 
 
 # ---------------------------------------------------------------------------
