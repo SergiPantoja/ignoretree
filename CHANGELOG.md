@@ -10,7 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Replaced the independent Git compliance checks with differential tests that compare Git decisions and provenance against all ignoretree usage modes.
-- Git test failures now reject unexpected `git check-ignore` exit codes, and known compatibility gaps are tracked as strict expected failures.
+- Git test failures now reject unexpected `git check-ignore` exit codes instead of treating them as nonmatches.
+
+### Fixed
+
+- Enforced Git's ignored-parent rule across defaults, exclude files, nested `.gitignore` files, and custom ignore files.
+- Made directory-only negations work correctly for traversal decisions.
+- Made nested `.gitignore` precedence independent of manual `enter_directory()` call order and prevented loading ignore files below excluded directories.
 
 ## [0.2.0] - 2026-04-08
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from itertools import permutations
 from pathlib import Path
+from unittest.mock import patch
 
 from ignoretree import IgnoreDecision, IgnoreResolver, PatternSource
+from ignoretree.reader import read_ignore_file
 
 # ---------------------------------------------------------------------------
 # Default patterns layer
@@ -300,16 +303,55 @@ class TestEdgeCases:
         assert resolver.is_ignored("folder/file.txt") is True
         assert resolver.is_ignored("folder/keep.txt") is False
 
-    def test_cross_layer_pruning_caveat(self, tmp_path: Path) -> None:
-        """Pruning can miss cross-layer negation of an ignored directory."""
+    def test_parent_barrier_applies_across_layers(self, tmp_path: Path) -> None:
+        """A higher-priority child negation cannot bypass an ignored parent."""
         (tmp_path / ".gitignore").write_text("!build/keep.txt\n")
         resolver = IgnoreResolver(tmp_path, default_patterns=["build/"])
         resolver.enter_directory("")
-        # Defaults layer ignores build/ — is_dir_ignored returns True.
+
         assert resolver.is_dir_ignored("build") is True
-        # But the gitignore layer un-ignores a file inside.
-        assert resolver.is_ignored("build/keep.txt") is False
+        assert resolver.explain("build/keep.txt") == IgnoreDecision(
+            ignored=True,
+            source=PatternSource(file="<defaults>", line=None, pattern="build/"),
+        )
         assert resolver.is_ignored("build/other.txt") is True
+
+    def test_parent_reinclusion_applies_across_layers(self, tmp_path: Path) -> None:
+        """Higher-priority rules can reopen a parent before including its child."""
+        (tmp_path / ".gitignore").write_text("!build/\n!build/keep.txt\n")
+        resolver = IgnoreResolver(tmp_path, default_patterns=["build/"])
+        resolver.enter_directory("")
+
+        assert resolver.is_dir_ignored("build") is False
+        assert resolver.explain("build/keep.txt") == IgnoreDecision(
+            ignored=False,
+            source=PatternSource(file=".gitignore", line=2, pattern="!build/keep.txt"),
+        )
+
+    def test_custom_rules_respect_parent_barrier_and_file_order(self, tmp_path: Path) -> None:
+        """Custom files retain declared order while enforcing reachable parents."""
+        (tmp_path / ".first").write_text("cache/\n")
+        (tmp_path / ".second").write_text("!cache/\ncache/*\n!cache/keep.txt\n")
+
+        reopened = IgnoreResolver(
+            tmp_path,
+            custom_ignore_filenames=[".first", ".second"],
+        )
+        assert reopened.is_dir_ignored("cache") is False
+        assert reopened.explain("cache/keep.txt") == IgnoreDecision(
+            ignored=False,
+            source=PatternSource(file=".second", line=3, pattern="!cache/keep.txt"),
+        )
+        assert reopened.is_ignored("cache/other.txt") is True
+
+        closed = IgnoreResolver(
+            tmp_path,
+            custom_ignore_filenames=[".second", ".first"],
+        )
+        assert closed.explain("cache/keep.txt") == IgnoreDecision(
+            ignored=True,
+            source=PatternSource(file=".first", line=1, pattern="cache/"),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -433,9 +475,26 @@ class TestLoadAll:
         resolver = IgnoreResolver(tmp_path)
         resolver.load_all()
 
-        # build/ is ignored and pruned — its .gitignore is never loaded.
+        # build/ is visited and pruned — its .gitignore is never loaded.
         assert resolver.is_dir_ignored("build") is True
-        assert "build" not in resolver._entered_dirs
+        assert "build" in resolver._entered_dirs
+        assert "build" in resolver._pruned_dirs
+
+    def test_ignored_directory_gitignore_is_never_read(self, tmp_path: Path) -> None:
+        """Manual discovery records ignored descendants without reading their rules."""
+        (tmp_path / "build" / "deep").mkdir(parents=True)
+        (tmp_path / ".gitignore").write_text("build/\n")
+        (tmp_path / "build" / ".gitignore").write_text("!keep.txt\n")
+
+        with patch("ignoretree.resolver.read_ignore_file", wraps=read_ignore_file) as reader:
+            resolver = IgnoreResolver(tmp_path)
+            resolver.enter_directory("build/deep")
+
+        loaded_paths = [call.args[0] for call in reader.call_args_list]
+        assert tmp_path / ".gitignore" in loaded_paths
+        assert tmp_path / "build" / ".gitignore" not in loaded_paths
+        assert resolver._entered_dirs == {"", "build", "build/deep"}
+        assert resolver._pruned_dirs == {"build", "build/deep"}
 
     def test_defaults_and_custom_with_load_all(self, tmp_path: Path) -> None:
         """Defaults and custom files work alongside load_all()."""
@@ -577,3 +636,35 @@ class TestAutoEnter:
         manual_results = [manual.is_ignored(p) for p in paths]
 
         assert auto_results == manual_results
+
+    def test_manual_entry_order_does_not_change_precedence(self, tmp_path: Path) -> None:
+        """All manual discovery orders resolve scopes root-to-deepest."""
+        (tmp_path / "src" / "lib").mkdir(parents=True)
+        (tmp_path / ".gitignore").write_text("*.log\n")
+        (tmp_path / "src" / ".gitignore").write_text("!keep.log\n")
+        (tmp_path / "src" / "lib" / ".gitignore").write_text("keep.log\n")
+
+        expected = (
+            IgnoreDecision(
+                ignored=False,
+                source=PatternSource(file="src/.gitignore", line=1, pattern="!keep.log"),
+            ),
+            IgnoreDecision(
+                ignored=True,
+                source=PatternSource(file="src/lib/.gitignore", line=1, pattern="keep.log"),
+            ),
+            IgnoreDecision(
+                ignored=True,
+                source=PatternSource(file=".gitignore", line=1, pattern="*.log"),
+            ),
+        )
+
+        for order in permutations(("", "src", "src/lib")):
+            resolver = IgnoreResolver(tmp_path)
+            for directory in order:
+                resolver.enter_directory(directory)
+            assert (
+                resolver.explain("src/keep.log"),
+                resolver.explain("src/lib/keep.log"),
+                resolver.explain("src/lib/other.log"),
+            ) == expected
