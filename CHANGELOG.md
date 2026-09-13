@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Enforced Git's ignored-parent rule across defaults, exclude files, nested `.gitignore` files, and custom ignore files.
 - Made directory-only negations work correctly for traversal decisions.
 - Made nested `.gitignore` precedence independent of manual `enter_directory()` call order and prevented loading ignore files below excluded directories.
+- Enforced canonical root-relative string paths and safe custom ignore basenames before matching or filesystem access.
+- Prevented `.gitignore`, exclude, and custom ignore-file discovery from escaping the resolved root through symlinks.
 
 ## [0.2.0] - 2026-04-08
 
