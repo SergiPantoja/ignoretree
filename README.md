@@ -47,6 +47,14 @@ resolver = IgnoreResolver(
 resolver.is_ignored("src/debug.log", auto_enter=True)  # True or False
 ```
 
+### Path contract and symlinks
+
+The repository root is resolved to an absolute path when the resolver is created and must be an existing directory. A Git repository is not required.
+
+Query and directory paths are lexical: they do not need to exist, but they must be nonempty `str` values using canonical, root-relative POSIX syntax. Absolute paths, Windows drive or UNC paths, backslashes, NUL characters, repeated separators, and `.` or `..` components are rejected. `enter_directory("")` is the sole empty-path exception for the repository root. Directory APIs accept one trailing slash; file-query APIs do not.
+
+Ignore-file discovery never follows symlinks. Root rules still match a queried symlink path lexically, but `.gitignore`, `.git/info/exclude`, and custom ignore files reached through a symlink are not read. Custom ignore filenames must be unique root-level basenames and cannot be `.git` or `.gitignore`.
+
 ### Bulk load
 
 If you're going to check many files, load all `.gitignore` files upfront:
@@ -77,8 +85,7 @@ for dirpath, dirnames, filenames in os.walk(root):
 
     # Prune ignored directories so os.walk doesn't descend into them.
     dirnames[:] = [
-        d for d in dirnames
-        if not resolver.is_dir_ignored(f"{rel_dir}/{d}" if rel_dir else d)
+        d for d in dirnames if not resolver.is_dir_ignored(f"{rel_dir}/{d}" if rel_dir else d)
     ]
 
     for fname in filenames:
