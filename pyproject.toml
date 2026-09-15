@@ -1,6 +1,6 @@
 [project]
 name = "ignoretree"
-version = "0.2.0"
+version = "0.3.0"
 description = "Layered gitignore-compatible ignore pattern resolution for Python"
 readme = "README.md"
 license = "MIT"
@@ -25,6 +25,12 @@ classifiers = [
 dependencies = [
     "pathspec>=1.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/SergiPantoja/ignoretree"
+Repository = "https://github.com/SergiPantoja/ignoretree"
+Issues = "https://github.com/SergiPantoja/ignoretree/issues"
+Changelog = "https://github.com/SergiPantoja/ignoretree/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]

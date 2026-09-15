@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Raised the minimum supported `pathspec` version to 1.1.0.
 - Made completed `load_all()` calls stable snapshots so repeated calls do not walk the repository again.
 
+### Migration notes
+
+- Path APIs now require canonical root-relative POSIX strings. Callers passing path-like objects, absolute paths, backslashes, repeated separators, or `.` and `..` components must normalize them first.
+- Negation rules no longer re-include a path while one of its parent directories remains ignored. Add negation rules for each ignored parent directory to make descendants eligible again.
+
 ### Fixed
 
 - Enforced Git's ignored-parent rule across defaults, exclude files, nested `.gitignore` files, and custom ignore files.
