@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ignoretree.compiler import CompiledIgnoreLayer, compile_ignore_patterns
+from ignoretree.git import locate_git_exclude
 from ignoretree.models import IgnoreDecision, PatternSource
 from ignoretree.reader import read_ignore_file
 
@@ -78,10 +79,14 @@ class IgnoreResolver:
         self._entered_dirs: set[str] = set()
         self._pruned_dirs: set[str] = set()
         self._discovery_stopped_dirs: set[str] = set()
+        self._load_all_complete = False
 
         # Layer 2: .git/info/exclude (repository-level).
-        exclude_patterns, exclude_sources = self._read_contained_ignore_file(
-            ".git/info/exclude", source_label=".git/info/exclude"
+        exclude_path = locate_git_exclude(self._root)
+        exclude_patterns, exclude_sources = (
+            read_ignore_file(exclude_path, source_label=".git/info/exclude")
+            if exclude_path is not None
+            else ([], [])
         )
         self._exclude_layer = compile_ignore_patterns(exclude_patterns, exclude_sources)
 
@@ -254,10 +259,15 @@ class IgnoreResolver:
         without additional :meth:`enter_directory` calls.
 
         Ignored directories and directory symlinks are pruned during the walk,
-        so large ignored subtrees (``node_modules/``, ``.git/``, etc.) and
-        out-of-root targets are skipped.
+        so large ignored subtrees and out-of-root targets are skipped. Git
+        metadata directories named ``.git`` are always skipped. A completed
+        load is a snapshot, so later calls return without walking again.
         """
-        for dirpath, dirnames, _filenames in os.walk(self._root):
+        if self._load_all_complete:
+            return
+
+        for dirpath, dirnames, _filenames in os.walk(self._root, followlinks=False):
+            dirnames[:] = [dirname for dirname in dirnames if dirname != ".git"]
             rel_dir = os.path.relpath(dirpath, self._root).replace(os.sep, "/")
             if rel_dir == ".":
                 rel_dir = ""
@@ -273,6 +283,8 @@ class IgnoreResolver:
                 if child not in self._pruned_dirs and child not in self._discovery_stopped_dirs:
                     entered_children.append(dirname)
             dirnames[:] = entered_children
+
+        self._load_all_complete = True
 
     @staticmethod
     def _validate_relative_path(

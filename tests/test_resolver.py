@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from itertools import permutations
 from pathlib import Path
 from unittest.mock import patch
@@ -546,13 +547,34 @@ class TestLoadAll:
         assert resolver.is_ignored("main.py") is False
 
     def test_load_all_idempotent(self, tmp_path: Path) -> None:
-        """Calling load_all() twice doesn't duplicate layers."""
+        """A completed load is a snapshot and a second call does not walk."""
         (tmp_path / ".gitignore").write_text("*.log\n")
         resolver = IgnoreResolver(tmp_path)
+
+        with patch("ignoretree.resolver.os.walk", wraps=os.walk) as walk:
+            resolver.load_all()
+            (tmp_path / "later").mkdir()
+            (tmp_path / "later" / ".gitignore").write_text("*.new\n")
+            resolver.load_all()
+
+        assert walk.call_count == 1
+        assert resolver.is_ignored("later/file.new") is False
+        fresh_resolver = IgnoreResolver(tmp_path)
+        fresh_resolver.load_all()
+        assert fresh_resolver.is_ignored("later/file.new") is True
+
+    def test_load_all_prunes_git_metadata_without_defaults(self, tmp_path: Path) -> None:
+        """Git metadata directories are never entered or traversed."""
+        (tmp_path / ".git" / "objects" / "ab").mkdir(parents=True)
+        (tmp_path / "src" / ".git" / "objects" / "cd").mkdir(parents=True)
+        resolver = IgnoreResolver(tmp_path)
+
         resolver.load_all()
-        initial_layers = len(resolver._gitignore_layers)
-        resolver.load_all()
-        assert len(resolver._gitignore_layers) == initial_layers
+
+        assert not any(
+            part == ".git" for entered in resolver._entered_dirs for part in entered.split("/")
+        )
+        assert resolver._entered_dirs == {"", "src"}
 
     def test_load_all_no_gitignore(self, tmp_path: Path) -> None:
         """load_all() works fine when no .gitignore files exist."""
