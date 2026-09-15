@@ -8,7 +8,7 @@ import stat
 from collections.abc import Sequence
 from pathlib import Path
 
-from ignoretree.compiler import CompiledIgnoreLayer, compile_ignore_patterns
+from ignoretree.compiler import CompiledIgnoreLayer, compile_ignore_patterns, fold_ascii_case
 from ignoretree.git import locate_git_exclude
 from ignoretree.models import IgnoreDecision, PatternSource
 from ignoretree.reader import read_ignore_file
@@ -39,6 +39,9 @@ class IgnoreResolver:
             Empty by default.
         custom_ignore_filenames: Unique root-level basenames of custom ignore
             files. ``.git`` and ``.gitignore`` are reserved. Empty by default.
+        case_sensitive: Whether ASCII letter case must match in patterns,
+            paths, and scope keys. Defaults to ``True``. Pass ``False`` to
+            match Git repositories configured with ``core.ignoreCase=true``.
 
     Raises:
         FileNotFoundError: If ``root`` does not exist.
@@ -61,10 +64,13 @@ class IgnoreResolver:
         root: Path,
         default_patterns: Sequence[str] = (),
         custom_ignore_filenames: Sequence[str] = (),
+        *,
+        case_sensitive: bool = True,
     ) -> None:
         self._root = root.resolve(strict=True)
         if not self._root.is_dir():
             raise NotADirectoryError(str(self._root))
+        self._case_sensitive = case_sensitive
 
         custom_filenames = self._validate_custom_filenames(custom_ignore_filenames)
 
@@ -72,7 +78,11 @@ class IgnoreResolver:
         default_sources = [
             PatternSource(file="<defaults>", line=None, pattern=p) for p in default_patterns
         ]
-        self._default_layer = compile_ignore_patterns(default_patterns, default_sources)
+        self._default_layer = compile_ignore_patterns(
+            default_patterns,
+            default_sources,
+            case_sensitive=self._case_sensitive,
+        )
 
         # Discovery state is initialized before contained ignore files are read.
         self._gitignore_layers: dict[str, CompiledIgnoreLayer] = {}
@@ -88,7 +98,11 @@ class IgnoreResolver:
             if exclude_path is not None
             else ([], [])
         )
-        self._exclude_layer = compile_ignore_patterns(exclude_patterns, exclude_sources)
+        self._exclude_layer = compile_ignore_patterns(
+            exclude_patterns,
+            exclude_sources,
+            case_sensitive=self._case_sensitive,
+        )
 
         # Layer 4: custom ignore files from repo root (highest priority).
         custom_patterns: list[str] = []
@@ -97,7 +111,11 @@ class IgnoreResolver:
             patterns, sources = self._read_contained_ignore_file(fname, source_label=fname)
             custom_patterns.extend(patterns)
             custom_sources.extend(sources)
-        self._custom_layer = compile_ignore_patterns(custom_patterns, custom_sources)
+        self._custom_layer = compile_ignore_patterns(
+            custom_patterns,
+            custom_sources,
+            case_sensitive=self._case_sensitive,
+        )
 
     def enter_directory(self, rel_dir: str) -> None:
         """Register a ``.gitignore`` if one exists in the given directory.
@@ -118,40 +136,46 @@ class IgnoreResolver:
             allow_empty=True,
             allow_trailing_slash=True,
         )
-        if rel_dir in self._entered_dirs:
+        scope = self._fold_case(rel_dir)
+        if scope in self._entered_dirs:
             return
 
         if rel_dir:
             parent = rel_dir.rpartition("/")[0]
             self.enter_directory(parent)
+            parent_scope = self._fold_case(parent)
 
-            if parent in self._discovery_stopped_dirs:
-                self._entered_dirs.add(rel_dir)
-                self._discovery_stopped_dirs.add(rel_dir)
+            if parent_scope in self._discovery_stopped_dirs:
+                self._entered_dirs.add(scope)
+                self._discovery_stopped_dirs.add(scope)
                 return
 
             # A directory's own ignore file is unreachable when an ancestor
             # source still excludes the directory.
             if self._resolve(rel_dir + "/").ignored:
-                self._entered_dirs.add(rel_dir)
-                self._pruned_dirs.add(rel_dir)
+                self._entered_dirs.add(scope)
+                self._pruned_dirs.add(scope)
                 return
 
             if self._contained_path(rel_dir, final_must_be_directory=True) is None:
-                self._entered_dirs.add(rel_dir)
-                self._discovery_stopped_dirs.add(rel_dir)
+                self._entered_dirs.add(scope)
+                self._discovery_stopped_dirs.add(scope)
                 return
 
-        self._entered_dirs.add(rel_dir)
+        self._entered_dirs.add(scope)
 
         gitignore_rel_path = f"{rel_dir}/.gitignore" if rel_dir else ".gitignore"
         source_label = f"{rel_dir}/.gitignore" if rel_dir else ".gitignore"
         patterns, sources = self._read_contained_ignore_file(
             gitignore_rel_path, source_label=source_label
         )
-        layer = compile_ignore_patterns(patterns, sources)
+        layer = compile_ignore_patterns(
+            patterns,
+            sources,
+            case_sensitive=self._case_sensitive,
+        )
         if layer is not None:
-            self._gitignore_layers[rel_dir] = layer
+            self._gitignore_layers[scope] = layer
 
     def is_ignored(self, rel_path: str, *, auto_enter: bool = False) -> bool:
         """Check whether a file path should be ignored.
@@ -280,7 +304,11 @@ class IgnoreResolver:
             for dirname in dirnames:
                 child = f"{rel_dir}/{dirname}" if rel_dir else dirname
                 self.enter_directory(child)
-                if child not in self._pruned_dirs and child not in self._discovery_stopped_dirs:
+                child_scope = self._fold_case(child)
+                if (
+                    child_scope not in self._pruned_dirs
+                    and child_scope not in self._discovery_stopped_dirs
+                ):
                     entered_children.append(dirname)
             dirnames[:] = entered_children
 
@@ -392,8 +420,13 @@ class IgnoreResolver:
             ancestor = "/".join(parts[:i])
             self.enter_directory(ancestor)
 
+    def _fold_case(self, value: str) -> str:
+        """Return the matching form of a path or scope key."""
+        return value if self._case_sensitive else fold_ascii_case(value)
+
     def _resolve(self, rel_path: str) -> IgnoreDecision:
         """Evaluate *rel_path*, stopping at the first excluded ancestor."""
+        rel_path = self._fold_case(rel_path)
         is_directory = rel_path.endswith("/")
         clean_path = rel_path.rstrip("/")
 
