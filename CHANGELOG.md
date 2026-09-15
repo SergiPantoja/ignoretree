@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Replaced the independent Git compliance checks with differential tests that compare Git decisions and provenance against all ignoretree usage modes.
 - Git test failures now reject unexpected `git check-ignore` exit codes instead of treating them as nonmatches.
 - Raised the minimum supported `pathspec` version to 1.1.0.
+- Made completed `load_all()` calls stable snapshots so repeated calls do not walk the repository again.
 
 ### Fixed
 
@@ -22,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Prevented `.gitignore`, exclude, and custom ignore-file discovery from escaping the resolved root through symlinks.
 - Preserved significant leading whitespace and accepted a UTF-8 BOM at the start of ignore files.
 - Made malformed and Git no-op patterns harmless so later valid rules still apply.
+- Loaded the effective common `.git/info/exclude` rules in linked Git worktrees and submodule-style layouts.
+- Prevented `load_all()` from traversing directories named `.git` without requiring a caller-provided ignore rule.
 
 ## [0.2.0] - 2026-04-08
 
