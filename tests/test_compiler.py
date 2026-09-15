@@ -50,3 +50,15 @@ def test_does_not_swallow_unexpected_compiler_errors() -> None:
         pytest.raises(RuntimeError, match="unexpected"),
     ):
         compile_ignore_patterns(["*.log"], [source])
+
+
+def test_case_insensitive_compilation_folds_only_ascii_and_preserves_sources() -> None:
+    patterns = ["FILE.TXT", "straße.TXT"]
+
+    layer = compile_ignore_patterns(patterns, _sources(patterns), case_sensitive=False)
+
+    assert layer is not None
+    assert layer.file_spec.match_file("file.txt") is True
+    assert layer.file_spec.match_file("straße.txt") is True
+    assert layer.file_spec.match_file("STRASSE.txt") is False
+    assert layer.sources == _sources(patterns)

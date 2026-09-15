@@ -47,12 +47,14 @@ def _resolve(
     *,
     default_patterns: Sequence[str] = (),
     custom_ignore_filenames: Sequence[str] = (),
+    case_sensitive: bool = True,
 ) -> IgnoreDecision:
     """Resolve a path through one fresh ignoretree usage mode."""
     resolver = IgnoreResolver(
         repo,
         default_patterns=default_patterns,
         custom_ignore_filenames=custom_ignore_filenames,
+        case_sensitive=case_sensitive,
     )
     clean_path = case.path.rstrip("/")
 
@@ -79,7 +81,12 @@ def _source_tuple(
     return source.file, source.line, pattern
 
 
-def assert_matches_git(repo: Path, cases: Iterable[PathCase]) -> None:
+def assert_matches_git(
+    repo: Path,
+    cases: Iterable[PathCase],
+    *,
+    case_sensitive: bool = True,
+) -> None:
     """Assert every ignoretree usage mode agrees with Git for each path."""
     for case in cases:
         # A trailing slash makes ``git check-ignore`` consider patterns that
@@ -87,7 +94,10 @@ def assert_matches_git(repo: Path, cases: Iterable[PathCase]) -> None:
         # entry itself, which Git checks without that suffix.
         git_path = case.path.rstrip("/") if case.is_dir else case.path
         git_result = git_check_ignore(repo, git_path)
-        resolver_results = {mode: _resolve(repo, case, mode) for mode in RESOLVER_MODES}
+        resolver_results = {
+            mode: _resolve(repo, case, mode, case_sensitive=case_sensitive)
+            for mode in RESOLVER_MODES
+        }
 
         assert {mode: result.ignored for mode, result in resolver_results.items()} == {
             mode: git_result.ignored for mode in RESOLVER_MODES
@@ -455,4 +465,35 @@ def test_parent_rules_across_native_sources_match_git(git_repo: Path) -> None:
             PathCase("artifacts/public/drop.txt"),
             PathCase("artifacts/public/keep.txt"),
         ],
+    )
+
+
+@pytest.mark.parametrize("ignore_case", [False, True])
+def test_explicit_case_policy_matches_git(git_repo: Path, ignore_case: bool) -> None:
+    """The explicit policy matches Git with the equivalent core.ignoreCase value."""
+    subprocess.run(
+        ["git", "config", "core.ignorecase", str(ignore_case).lower()],
+        cwd=git_repo,
+        check=True,
+        capture_output=True,
+    )
+    (git_repo / ".gitignore").write_text(
+        "/ROOT.LOG\n*.LOG\n!KEEP.LOG\nUnicode-ß.txt\nstraße.txt\nCAFÉ-one.txt\ncafé-two.TXT\n"
+    )
+    (git_repo / "Scope").mkdir()
+    (git_repo / "Scope" / ".gitignore").write_text("*.TXT\n")
+
+    assert_matches_git(
+        git_repo,
+        [
+            PathCase("root.log"),
+            PathCase("debug.log"),
+            PathCase("keep.log"),
+            PathCase("unicode-ß.txt"),
+            PathCase("STRASSE.txt"),
+            PathCase("café-one.txt"),
+            PathCase("cafe\u0301-two.txt"),
+            PathCase("Scope/file.txt"),
+        ],
+        case_sensitive=not ignore_case,
     )

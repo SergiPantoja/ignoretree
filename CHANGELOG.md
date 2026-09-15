@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added the keyword-only `case_sensitive` resolver option for explicit compatibility with Git repositories that use `core.ignoreCase=true`. It defaults to case-sensitive matching and uses ASCII-only folding when disabled.
+
 ### Changed
 
 - Replaced the independent Git compliance checks with differential tests that compare Git decisions and provenance against all ignoretree usage modes.

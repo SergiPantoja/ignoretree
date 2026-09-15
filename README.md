@@ -173,6 +173,18 @@ Leading spaces and tabs are part of a pattern. Unescaped trailing spaces follow 
 
 Malformed patterns and Git no-op patterns are skipped. They do not prevent valid rules later in the same file or source from applying. This behavior is consistent for defaults, `.git/info/exclude`, nested `.gitignore` files, and custom ignore files.
 
+## Case sensitivity
+
+Matching is case-sensitive by default. Pass `case_sensitive=False` when creating a resolver to match the ignore behavior of a repository configured with `core.ignoreCase=true`.
+
+```python
+resolver = IgnoreResolver(root, case_sensitive=False)
+```
+
+Ignoretree does not read Git configuration automatically. Case-insensitive mode folds only the ASCII letters `A` through `Z`. Pattern provenance keeps its original spelling.
+
+ignoretree matches Unicode path strings lexically and does not emulate `core.precomposeUnicode`.
+
 ## Development
 
 Clone and install dependencies:
