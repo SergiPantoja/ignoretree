@@ -58,6 +58,10 @@ resolver.is_ignored("src/debug.log")
 resolver.is_ignored("tests/conftest.py")
 ```
 
+`load_all()` captures a repository snapshot. Repeated calls on the same resolver return without walking again. Create a new resolver to observe ignore files or directories added after the snapshot.
+
+Directories named `.git` are always skipped during bulk discovery, even when caller defaults do not ignore them.
+
 ### Walker integration
 
 For full control during directory traversal, call `enter_directory()` as you go. This lets you prune ignored directories so `os.walk` doesn't descend into them:
@@ -141,6 +145,8 @@ Patterns are evaluated across four layers, from lowest to highest priority:
 | 4 (highest) | Custom | Files listed in `custom_ignore_filenames` |
 
 Within each layer, negation patterns (`!`) work per gitignore rules. Across layers, the last layer with a matching pattern wins.
+
+For normal repositories and linked Git worktrees, ignoretree locates the effective common `info/exclude` file directly from Git metadata. It does not invoke Git at runtime. The public source label remains `.git/info/exclude` in both layouts.
 
 ## Paths and symlinks
 
