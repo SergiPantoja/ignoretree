@@ -159,6 +159,14 @@ Ignoretree does not follow symlinks when looking for ignore files. Rules from sa
 
 Custom ignore filenames must be unique root-level names. They cannot be `.git` or `.gitignore`.
 
+## Ignore pattern parsing
+
+Ignore files are read as UTF-8. A UTF-8 BOM is accepted at the start of a file, and both LF and CRLF line endings are supported.
+
+Leading spaces and tabs are part of a pattern. Unescaped trailing spaces follow Git rules and are ignored during matching. Escape a trailing space with a backslash when it is part of a filename.
+
+Malformed patterns and Git no-op patterns are skipped. They do not prevent valid rules later in the same file or source from applying. This behavior is consistent for defaults, `.git/info/exclude`, nested `.gitignore` files, and custom ignore files.
+
 ## Development
 
 Clone and install dependencies:
