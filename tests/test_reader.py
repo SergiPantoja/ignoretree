@@ -75,3 +75,41 @@ class TestReadIgnoreFile:
         f.write_text("foo\\ \n")
         patterns, _ = read_ignore_file(f)
         assert patterns == ["foo\\ "]
+
+    def test_preserves_leading_and_trailing_whitespace(self, tmp_path: Path) -> None:
+        """Whitespace remains part of the raw pattern and source text."""
+        f = tmp_path / ".gitignore"
+        f.write_text(" foo \n\tbar\n #name\n !name\n   \n")
+
+        patterns, sources = read_ignore_file(f)
+
+        assert patterns == [" foo ", "\tbar", " #name", " !name", "   "]
+        assert [source.pattern for source in sources] == patterns
+        assert [source.line for source in sources] == [1, 2, 3, 4, 5]
+
+    def test_only_column_zero_hash_starts_a_comment(self, tmp_path: Path) -> None:
+        f = tmp_path / ".gitignore"
+        f.write_text("# comment\n #filename\n\\#escaped\n")
+
+        patterns, _ = read_ignore_file(f)
+
+        assert patterns == [" #filename", "\\#escaped"]
+
+    def test_removes_bom_only_at_start_of_file(self, tmp_path: Path) -> None:
+        f = tmp_path / ".gitignore"
+        f.write_text("\ufeff*.log\n\ufeffliteral\n", encoding="utf-8")
+
+        patterns, sources = read_ignore_file(f)
+
+        assert patterns == ["*.log", "\ufeffliteral"]
+        assert [source.pattern for source in sources] == patterns
+
+    def test_crlf_lines_keep_patterns_and_line_numbers(self, tmp_path: Path) -> None:
+        f = tmp_path / ".gitignore"
+        f.write_bytes(b"# comment\r\n\r\n*.log\r\n")
+
+        patterns, sources = read_ignore_file(f)
+
+        assert patterns == ["*.log"]
+        assert sources[0].line == 3
+        assert sources[0].pattern == "*.log"

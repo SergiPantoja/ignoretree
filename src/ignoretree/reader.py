@@ -16,9 +16,10 @@ def read_ignore_file(
 ) -> tuple[list[str], list[PatternSource]]:
     """Read and parse a gitignore-format ignore file.
 
-    Extracts patterns from the file, skipping blank lines and comments. Trailing
-    whitespace is preserved for pathspec to handle (important for
-    backslash-escaped trailing spaces like ``foo\\ ``).
+    Extracts patterns from the file, skipping empty lines and comments whose
+    first character is ``#``. All significant whitespace is preserved for the
+    shared pattern compiler. A UTF-8 BOM is removed only from the start of the
+    file.
 
     Args:
         path: Absolute path to the ignore file.
@@ -31,7 +32,7 @@ def read_ignore_file(
         file does not exist or cannot be read.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return [], []
     except (OSError, UnicodeDecodeError):
@@ -43,7 +44,7 @@ def read_ignore_file(
     sources: list[PatternSource] = []
 
     for line_no, raw_line in enumerate(text.splitlines(), start=1):
-        line = raw_line.lstrip()
+        line = raw_line
         if not line or line.startswith("#"):
             continue
         patterns.append(line)

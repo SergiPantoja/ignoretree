@@ -82,3 +82,24 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+
+  # The shared compiler relies on Git no-op handling introduced in pathspec 1.1.0.
+  minimum-pathspec:
+    name: Test minimum pathspec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+
+      - run: uv sync
+
+      - name: Install minimum pathspec
+        run: uv pip install --python .venv/bin/python "pathspec==1.1.0"
+
+      - name: Verify minimum pathspec
+        run: uv run --no-sync python -c "import pathspec; assert pathspec.__version__ == '1.1.0'"
+
+      - run: uv run --no-sync pytest
