@@ -6,25 +6,13 @@ import os
 import re
 import stat
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
-from pathspec import GitIgnoreSpec, PathSpec
-from pathspec.pattern import Pattern
-
+from ignoretree.compiler import CompiledIgnoreLayer, compile_ignore_patterns
 from ignoretree.models import IgnoreDecision, PatternSource
 from ignoretree.reader import read_ignore_file
 
 _WINDOWS_DRIVE_PATH = re.compile(r"^[A-Za-z]:")
-
-
-@dataclass(frozen=True, slots=True)
-class _IgnoreLayer:
-    """Compiled file and directory views with aligned provenance."""
-
-    file_spec: GitIgnoreSpec
-    directory_spec: PathSpec[Pattern]
-    sources: list[PatternSource]
 
 
 class IgnoreResolver:
@@ -83,10 +71,10 @@ class IgnoreResolver:
         default_sources = [
             PatternSource(file="<defaults>", line=None, pattern=p) for p in default_patterns
         ]
-        self._default_layer = self._compile_layer(default_patterns, default_sources)
+        self._default_layer = compile_ignore_patterns(default_patterns, default_sources)
 
         # Discovery state is initialized before contained ignore files are read.
-        self._gitignore_layers: dict[str, _IgnoreLayer] = {}
+        self._gitignore_layers: dict[str, CompiledIgnoreLayer] = {}
         self._entered_dirs: set[str] = set()
         self._pruned_dirs: set[str] = set()
         self._discovery_stopped_dirs: set[str] = set()
@@ -95,7 +83,7 @@ class IgnoreResolver:
         exclude_patterns, exclude_sources = self._read_contained_ignore_file(
             ".git/info/exclude", source_label=".git/info/exclude"
         )
-        self._exclude_layer = self._compile_layer(exclude_patterns, exclude_sources)
+        self._exclude_layer = compile_ignore_patterns(exclude_patterns, exclude_sources)
 
         # Layer 4: custom ignore files from repo root (highest priority).
         custom_patterns: list[str] = []
@@ -104,7 +92,7 @@ class IgnoreResolver:
             patterns, sources = self._read_contained_ignore_file(fname, source_label=fname)
             custom_patterns.extend(patterns)
             custom_sources.extend(sources)
-        self._custom_layer = self._compile_layer(custom_patterns, custom_sources)
+        self._custom_layer = compile_ignore_patterns(custom_patterns, custom_sources)
 
     def enter_directory(self, rel_dir: str) -> None:
         """Register a ``.gitignore`` if one exists in the given directory.
@@ -156,7 +144,7 @@ class IgnoreResolver:
         patterns, sources = self._read_contained_ignore_file(
             gitignore_rel_path, source_label=source_label
         )
-        layer = self._compile_layer(patterns, sources)
+        layer = compile_ignore_patterns(patterns, sources)
         if layer is not None:
             self._gitignore_layers[rel_dir] = layer
 
@@ -446,21 +434,8 @@ class IgnoreResolver:
         return IgnoreDecision(ignored=result is True, source=source)
 
     @staticmethod
-    def _compile_layer(
-        patterns: Sequence[str], sources: list[PatternSource]
-    ) -> _IgnoreLayer | None:
-        """Compile matching views while preserving shared source indexes."""
-        if not patterns:
-            return None
-        return _IgnoreLayer(
-            file_spec=GitIgnoreSpec.from_lines(patterns),
-            directory_spec=PathSpec.from_lines("gitignore", patterns),
-            sources=sources,
-        )
-
-    @staticmethod
     def _check_layer(
-        layer: _IgnoreLayer, path: str, *, is_directory: bool
+        layer: CompiledIgnoreLayer, path: str, *, is_directory: bool
     ) -> tuple[bool, PatternSource] | None:
         """Return the matching result and aligned source for one layer."""
         spec = layer.directory_spec if is_directory else layer.file_spec

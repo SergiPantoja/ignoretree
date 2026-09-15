@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -40,9 +40,20 @@ def _enter_ancestors(resolver: IgnoreResolver, path: str) -> None:
         resolver.enter_directory("/".join(parts[:depth]))
 
 
-def _resolve(repo: Path, case: PathCase, mode: ResolverMode) -> IgnoreDecision:
+def _resolve(
+    repo: Path,
+    case: PathCase,
+    mode: ResolverMode,
+    *,
+    default_patterns: Sequence[str] = (),
+    custom_ignore_filenames: Sequence[str] = (),
+) -> IgnoreDecision:
     """Resolve a path through one fresh ignoretree usage mode."""
-    resolver = IgnoreResolver(repo)
+    resolver = IgnoreResolver(
+        repo,
+        default_patterns=default_patterns,
+        custom_ignore_filenames=custom_ignore_filenames,
+    )
     clean_path = case.path.rstrip("/")
 
     if mode == "manual":
@@ -194,6 +205,27 @@ def assert_matches_git(repo: Path, cases: Iterable[PathCase]) -> None:
             ],
             id="nul-delimited-provenance",
         ),
+        pytest.param(
+            " foo\n\tbar\n #name\n !name\n",
+            [
+                PathCase(" foo"),
+                PathCase("foo"),
+                PathCase("\tbar"),
+                PathCase(" #name"),
+                PathCase(" !name"),
+            ],
+            id="significant-leading-whitespace",
+        ),
+        pytest.param(
+            "!\ntrailing\\\n[z-a]\n[\n/\n*.log\n",
+            [PathCase("debug.log"), PathCase("["), PathCase("main.py")],
+            id="malformed-pattern-no-ops",
+        ),
+        pytest.param(
+            "\ufeff*.bom\r\n*.crlf\r\n",
+            [PathCase("artifact.bom"), PathCase("artifact.crlf"), PathCase("main.py")],
+            id="bom-and-crlf",
+        ),
     ],
 )
 def test_root_gitignore_matches_git(
@@ -225,6 +257,84 @@ def test_nested_gitignores_match_git(git_repo: Path) -> None:
             PathCase("src/core.dump"),
         ],
     )
+
+
+def test_malformed_nested_gitignore_does_not_hide_valid_rules(git_repo: Path) -> None:
+    """Invalid nested patterns are no-ops and retain later source line numbers."""
+    (git_repo / "src").mkdir()
+    (git_repo / "src" / ".gitignore").write_text("# comment\n!\n[z-a]\n*.log\n")
+
+    assert_matches_git(
+        git_repo,
+        [PathCase("src/debug.log"), PathCase("src/main.py")],
+    )
+
+
+def test_malformed_info_exclude_does_not_hide_valid_rules(git_repo: Path) -> None:
+    """Invalid exclude patterns do not prevent a later valid rule."""
+    (git_repo / ".git" / "info" / "exclude").write_text("!\n[z-a]\n*.secret\n")
+
+    assert_matches_git(
+        git_repo,
+        [PathCase("token.secret"), PathCase("main.py")],
+    )
+
+
+def test_malformed_defaults_match_equivalent_git_rules(git_repo: Path) -> None:
+    """Programmatic defaults filter no-ops the same way as a Git ignore file."""
+    patterns = ["!", "trailing\\", "[z-a]", "/", "*.log"]
+    cases = [PathCase("debug.log"), PathCase("main.py")]
+    (git_repo / ".gitignore").write_text("\n".join(patterns) + "\n")
+    git_results = {case.path: git_check_ignore(git_repo, case.path) for case in cases}
+    (git_repo / ".gitignore").write_text("")
+
+    for case in cases:
+        for mode in RESOLVER_MODES:
+            result = _resolve(git_repo, case, mode, default_patterns=patterns)
+            assert result.ignored is git_results[case.path].ignored
+
+    assert _resolve(
+        git_repo,
+        PathCase("debug.log"),
+        "manual",
+        default_patterns=patterns,
+    ).source == PatternSource(file="<defaults>", line=None, pattern="*.log")
+
+
+def test_every_custom_file_matches_equivalent_git_rules(git_repo: Path) -> None:
+    """Each custom file filters malformed rules and keeps its own provenance."""
+    first = "\ufeff# comment\r\n\r\n!\r\n[z-a]\r\n*.tmp\r\n"
+    second = "trailing\\\n/\n*.draft\n"
+    cases = [PathCase("file.tmp"), PathCase("file.draft"), PathCase("main.py")]
+    (git_repo / ".gitignore").write_text(first + second)
+    git_results = {case.path: git_check_ignore(git_repo, case.path) for case in cases}
+    (git_repo / ".gitignore").write_text("")
+    (git_repo / ".first").write_text(first)
+    (git_repo / ".second").write_text(second)
+    custom_files = [".first", ".second"]
+
+    for case in cases:
+        for mode in RESOLVER_MODES:
+            result = _resolve(
+                git_repo,
+                case,
+                mode,
+                custom_ignore_filenames=custom_files,
+            )
+            assert result.ignored is git_results[case.path].ignored
+
+    assert _resolve(
+        git_repo,
+        PathCase("file.tmp"),
+        "manual",
+        custom_ignore_filenames=custom_files,
+    ).source == PatternSource(file=".first", line=5, pattern="*.tmp")
+    assert _resolve(
+        git_repo,
+        PathCase("file.draft"),
+        "manual",
+        custom_ignore_filenames=custom_files,
+    ).source == PatternSource(file=".second", line=3, pattern="*.draft")
 
 
 def test_git_oracle_distinguishes_negation_from_ignored(git_repo: Path) -> None:

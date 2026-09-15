@@ -31,6 +31,18 @@ class TestDefaults:
         assert resolver.is_ignored("module.pyc") is False
         assert resolver.is_ignored("src/main.py") is False
 
+    def test_malformed_defaults_are_no_ops(self, tmp_path: Path) -> None:
+        resolver = IgnoreResolver(
+            tmp_path,
+            default_patterns=["!", "trailing\\", "[z-a]", "/", "*.log"],
+        )
+
+        assert resolver.explain("debug.log") == IgnoreDecision(
+            ignored=True,
+            source=PatternSource(file="<defaults>", line=None, pattern="*.log"),
+        )
+        assert resolver.is_ignored("main.py") is False
+
 
 # ---------------------------------------------------------------------------
 # .git/info/exclude layer
@@ -207,6 +219,24 @@ class TestCustom:
         resolver = IgnoreResolver(tmp_path, custom_ignore_filenames=[".nonexistent"])
         assert resolver.is_ignored("main.py") is False
 
+    def test_each_custom_file_filters_malformed_patterns(self, tmp_path: Path) -> None:
+        (tmp_path / ".first").write_text("# comment\n!\n[z-a]\n*.tmp\n")
+        (tmp_path / ".second").write_text("trailing\\\n/\n*.draft\n")
+        resolver = IgnoreResolver(
+            tmp_path,
+            custom_ignore_filenames=[".first", ".second"],
+        )
+
+        assert resolver.explain("file.tmp") == IgnoreDecision(
+            ignored=True,
+            source=PatternSource(file=".first", line=4, pattern="*.tmp"),
+        )
+        assert resolver.explain("file.draft") == IgnoreDecision(
+            ignored=True,
+            source=PatternSource(file=".second", line=3, pattern="*.draft"),
+        )
+        assert resolver.is_ignored("main.py") is False
+
 
 # ---------------------------------------------------------------------------
 # Directory pruning
@@ -253,13 +283,14 @@ class TestEdgeCases:
         assert resolver.is_ignored("main.py") is False
         assert len(resolver._gitignore_layers) == 1  # no duplicate layers
 
-    def test_trailing_whitespace_in_patterns(self, tmp_path: Path) -> None:
-        """Unescaped trailing whitespace doesn't affect matching."""
+    def test_significant_leading_and_ignored_trailing_whitespace(self, tmp_path: Path) -> None:
+        """Git ignores unescaped trailing spaces but preserves leading spaces."""
         (tmp_path / ".gitignore").write_text("*.log   \n  *.pyc\n")
         resolver = IgnoreResolver(tmp_path)
         resolver.enter_directory("")
         assert resolver.is_ignored("debug.log") is True
-        assert resolver.is_ignored("module.pyc") is True
+        assert resolver.is_ignored("module.pyc") is False
+        assert resolver.is_ignored("  module.pyc") is True
 
     def test_escaped_trailing_space_patterns(self, tmp_path: Path) -> None:
         """Escaped trailing spaces are preserved through reader to resolver."""
