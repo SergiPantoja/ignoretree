@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-15
+
 ### Added
 
 - Added the keyword-only `case_sensitive` resolver option for explicit compatibility with Git repositories that use `core.ignoreCase=true`. It defaults to case-sensitive matching and uses ASCII-only folding when disabled.
@@ -55,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - GitIgnoreSpec backend for accurate gitignore semantics.
 - Git compliance test suite validated against git 2.48–2.53.
 
-[Unreleased]: https://github.com/SergiPantoja/ignoretree/compare/v0.2.0...HEAD
-[0.1.0]: https://github.com/SergiPantoja/ignoretree/releases/tag/v0.1.0
+[Unreleased]: https://github.com/SergiPantoja/ignoretree/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/SergiPantoja/ignoretree/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SergiPantoja/ignoretree/releases/tag/v0.2.0
+[0.1.0]: https://github.com/SergiPantoja/ignoretree/releases/tag/v0.1.0
