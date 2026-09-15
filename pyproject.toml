@@ -42,6 +42,17 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/ignoretree"]
 
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src",
+    "tests",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
